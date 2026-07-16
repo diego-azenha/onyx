@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# data & artifacts are regenerable (make dataset / make train) — never versioned
+data/
+artifacts/
+
+# platform scaffolding: local run output and credentials
+prediction/
+.crunchdao/token
