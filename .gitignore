@@ -1,16 +1,88 @@
+# Python
 __pycache__/
-*.pyc
-*.pyo
-.pytest_cache/
-.ruff_cache/
-*.egg-info/
+*.py[cod]
+*$py.class
+*.so
+.Python
 build/
+develop-eggs/
 dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# data & artifacts are regenerable (make dataset / make train) — never versioned
+# Virtual environments
+venv/
+.venv
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.hypothesis/
+
+# IDEs and editors
+.vscode/
+.vscode-server/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+.sublime-project
+.sublime-workspace
+*.code-workspace
+.editorconfig
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Linting and code formatting
+.ruff_cache/
+.pylint.d/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Local environment
+.env
+.env.local
+.env.*.local
+*.secret
+secrets/
+
+# Data & artifacts are regenerable (make dataset / make train) — never versioned
 data/
 artifacts/
 
-# platform scaffolding: local run output and credentials
+# Platform scaffolding: local run output and credentials
 prediction/
 .crunchdao/token
+
+# Logs
+*.log
+logs/
+
+# OS temp files
+*.tmp
+.cache/
+tmp/
+temp/
