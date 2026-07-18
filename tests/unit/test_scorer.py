@@ -28,7 +28,7 @@ def test_scorer_feature_order_stable_and_no_leakage_of_T(cfg):
     scorer = StreamScorer(h0, default_blocks(), None, cfg)
     feats = scorer.update_features(float(rng.randn()))
     assert "T" not in feats and "t_total" not in feats
-    assert len(feats) == 80
+    assert len(feats) == 85
 
 
 def test_scorer_new_instance_per_series_gives_same_result_regardless_of_order(cfg):

@@ -3,8 +3,9 @@
 Modelo: sob H0, e_t ~ N(0,1) (e = fluxo congelado — o filtro cobre média E variância, "todas
 (média+var)" na tabela §5 #20, logo nunca usa o fluxo vol-ajustado, §3.4). Pós-mudança: e_t ~
 N(mu,sigma^2), prior conjugado Normal-Inv-chi^2. Hazard constante h, sem morte de regime (a quebra é
-permanente). Dois filtros independentes (hazards 1/100 e 1/400) rodam em paralelo dentro do mesmo
-bloco (plano tabela §5: "2 filtros (hazards h∈{1/100,1/400}), K=48, protege 8 recentes").
+permanente). Três filtros independentes (hazards 1/50, 1/100 e 1/400, configs/default.yaml
+bayes.hazards) rodam em paralelo dentro do mesmo bloco — 1/50 acrescentado para reação mais rápida
+em t baixo (docs/DIAGNOSTICO_TS_AUC.md, direção 4; plano tabela §5 original previa só 1/100 e 1/400).
 """
 from __future__ import annotations
 

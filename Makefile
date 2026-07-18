@@ -7,5 +7,6 @@ determinism:  python scripts/check_determinism.py
 smoke:        python scripts/submission_smoke_test.py
 test:         pytest tests/
 ci:           pytest tests/unit tests/causality tests/determinism
+run_all:      python scripts/run_all.py
 
-.PHONY: dataset train diagnose robustness benchmark determinism smoke test ci
+.PHONY: dataset train diagnose robustness benchmark determinism smoke test ci run_all
