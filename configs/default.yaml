@@ -46,6 +46,56 @@ conformal:                            # plano §4.2 #23
   epsilons: [0.05, 0.1, 0.2, 0.4]
   reset_epsilons: [0.05, 0.1, 0.2, 0.4]
 
+rank_twosample:                       # R4 (docs/PARECER_AUDITORIA_ONYX.md §6-R4): duas amostras
+  windows: [25, 100]                  # rank-based janela-vs-histórico -- analogo causal de 2025
+
+dependence:                           # P1 (docs/INVESTIGACAO_FALHAS_V3.md): dependencia nao-linear
+  windows: [100]                      # rho1 de |e| e e^2 -- w050 PODADA (morta no SHAP do V4, rank 164+)
+  mass_window: 100                    # massa multi-lag Sum rho_k^2
+  mass_max_lag: 5
+
+lmoments:                             # P2 -- PODADA do pipeline (0,51% SHAP por ~65us; ver scorer.py).
+  windows: [50, 100]                  # config mantida para o bloco/teste standalone reabrivel
+
+bocpd:                                # BOCPD (Adams-MacKay): posterior de run-length de variancia
+  r_max: 256                          # ~30 us/passo (medido); localizacao principiada (vs varloc heuristico)
+  hazard_lambda: 250.0                # H = 1/lambda
+  alpha0: 2.0                         # prior IG -> preditiva t_4 (variancia 1, robusta a cauda)
+  beta0: 1.0
+  recent_k: 5                         # cp_prob = P(run-length < 5)
+
+varloc:                               # P3 (docs/INVESTIGACAO_FALHAS_V3.md): variancia localizada
+  scales: [10, 25, 50, 100, 250]      # max/min do z de variancia sobre escalas (localiza o changepoint)
+  recent: 25                          # contraste recente-vs-defasado
+  lagged: 100
+
+jumps:                                # P4 (docs/INVESTIGACAO_FALHAS_V3.md): bipower/saltos + leverage
+  windows: [50, 100]                  # RV/BV (razao de salto), semivariancia RS+/RS-, leverage
+
+# --- proposta V2 (docs/PROPOSTA_FEATURES_V2.md) ---
+mmd:                                  # F3: MMD de kernel via Random Fourier Features (NEWMA)
+  n_features: 64                      # D; custo medido ~9 us/passo (D=64), ~11 us (D=128)
+  bandwidth: 1.0                      # e ja e padronizado por sigma_e -> sigma=1 e a escala natural
+  lambda_vfast: 0.08                  # janela efetiva ~12 passos -- cobre o regime t<=50, onde
+                                      # fast/slow ainda nao aqueceram (docs/RESULTADOS_FEATURES_V2 §3)
+  lambda_fast: 0.02                   # janela efetiva ~50 passos
+  lambda_slow: 0.005                  # janela efetiva ~200 passos
+
+multiscale:                           # F4: energia por escala (Haar diadico causal), ~4 us/passo
+  n_scales: 5                         # escala j produz um coeficiente a cada 2^(j+1) amostras
+  ewma_lambda: 0.05
+  warmup_min_coeffs: 3                # NaN ate a escala ter 3 coeficientes (honesto, nao inventado)
+
+h0_fingerprint:                       # F2: descritores estendidos de H0, custo ZERO por passo
+  hill_frac: 0.05                     # fracao superior de |e| usada pelo estimador de Hill
+  acf_max_lag: 10
+  hurst_scales: [1, 2, 4, 8, 16]
+  volvol_window: 50
+
+calibration:                          # F1: nulo por serie medido sobre o proprio historico
+  enabled: true
+  shrink_pseudo: 10.0                 # encolhe sd empirico -> teorico i.i.d. com peso n_eff/(n_eff+10)
+
 features:
   warmup_min_n: 5                     # below this, window/EWMA-derived stats emit NaN
 
@@ -66,6 +116,27 @@ lightgbm:                              # plano §8.3
   train_num_threads: 8
   predict_num_threads: 1
   n_folds: 5
+  feval_max_valid_rows: null           # R2 (parecer §6-R2): subamostra determinística do feval de
+                                        # AUC-por-passo. MEDIDO (retreino real, 2026-07-20): uma
+                                        # subamostra fixa de 150k linhas usada como criterio de
+                                        # parada por ~150-200 rodadas sofre "winner's curse" --
+                                        # o round-argmax fica otimisticamente enviesado para ESSA
+                                        # subamostra fixa e nao generaliza para o fold inteiro.
+                                        # Usar o fold inteiro reduz essa fonte de ruido; reativar
+                                        # (>0) só se o custo por rodada em datasets maiores exigir e
+                                        # com subamostra bem maior (>= algumas centenas de milhares).
+  early_stopping_metric: logloss       # ver comentário em src/sbrt/config.py:LightGBMConfig --
+                                        # "ts_auc_by_t" sozinho (mesmo sem subamostra) regrediu a
+                                        # TS-AUC OOF real (Delta -0.0099, IC exclui 0); "logloss"
+                                        # reproduz o comportamento original, validado neste retreino
+                                        # (Delta -0.0014, IC inclui 0 -- indistinguível do baseline).
+
+rank:                                   # R3 (docs/PARECER_AUDITORIA_ONYX.md §6-R3): objetivo de
+  objective: lambdarank                 # ranking por grupo t, membro PARALELO do ensemble binario
+  label_gain: [0, 1]                    # (nao substitui) -- ver model/train.py:train_rank
+  truncation_level_cap: 300             # ver comentario em config.py:RankObjectiveConfig -- grupos
+                                         # de t<=100 chegam a ~8000 linhas/fold; sem cap o treino
+                                         # trava (custo ~group_size*truncation_level por grupo)
 
 thinning:                              # plano §8.1
   full_until: 100

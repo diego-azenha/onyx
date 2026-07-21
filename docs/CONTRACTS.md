@@ -65,7 +65,7 @@ produção.
 def generate(scenario_id: str, seed: int, cfg=None) -> tuple[np.ndarray, np.ndarray, int | None]: ...
 
 def evaluate(scenario_id: str, trajectories: list, control_trajectories: list | None,
-             tau: int | None, cfg) -> GateResult: ...
+             tau: int | None, cfg, reference_trajectories: list | None = None) -> GateResult: ...
 ```
 
 O contrato original do plano de repositório tinha `evaluate(scenario_id, scores, tau, cfg)` — sem
@@ -73,6 +73,13 @@ como comparar cenário-vs-controle sem receber os dois. Correção: `evaluate` r
 `trajectories` (lista de trajetórias de score, uma por seed) e `control_trajectories` (idem, ou
 `None` para cenários sem par, ex. T6/T9/T10/T12/T12b). `scenario_id` com sufixo `_ctrl` em
 `generate` produz o gêmeo de controle com a mesma seed.
+
+R5 (docs/PARECER_AUDITORIA_ONYX.md §6-R5) acrescentou `reference_trajectories` (opcional, default
+`None`): painel i.i.d. N(0,1) sem quebra, mesmas seeds/T (`generators.generate_reference_panel`),
+só usado para `RELATIVE_GATE_SCENARIOS` (t2/t6/t9/t10/t13) — quando fornecido, o gate desses
+cenários vira um GAP contra o painel em vez de um nível absoluto (necessário porque o calibrador
+supervisionado não é calibrado em [0,1], model/predict.py). `None` reproduz o gate absoluto
+original bit-a-bit — usado pelo modo fallback, que É calibrado em [0,1] por construção.
 
 ## `src/sbrt/evaluation/harness.py` — ajuste ao contrato original
 

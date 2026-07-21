@@ -67,3 +67,65 @@ class ModelEnsemble:
         x = to_array(feats, self.feature_order).reshape(1, -1)
         preds = [b.predict(x, num_threads=self.predict_num_threads)[0] for b in self.boosters]
         return float(np.mean(preds))
+
+
+@dataclass
+class RankModelEnsemble:
+    """R3 (docs/PARECER_AUDITORIA_ONYX.md §6-R3): ensemble treinado com objetivo de ranking por
+    grupo t (lambdarank/rank_xendcg, model/train.py:train_rank) -- membro PARALELO do ensemble
+    binário, não um substituto (nenhum precedente interno ainda, parecer §6-R3). `booster.predict()`
+    para um objetivo de ranking devolve um score de relevância CRU (sem semântica de probabilidade,
+    escala arbitrária, pode ser negativo) -- diferente do `ModelEnsemble` binário. Aplicamos uma
+    sigmoide FIXA (não recalibrada) só para mapear em (0,1) e manter compatibilidade com o resto do
+    pipeline (postprocess, formato de submissão); como TS-AUC/gates dependem só de ORDEM relativa
+    (parecer §3.1), qualquer mapeamento monótono fixo preserva o desempenho de ranking exatamente."""
+
+    boosters: list
+    feature_order: tuple
+    predict_num_threads: int = 1
+    fold_evals: list = field(default_factory=list)
+
+    @classmethod
+    def load(cls, path: str | Path) -> "RankModelEnsemble":
+        path = Path(path)
+        boosters = joblib.load(path / "boosters.joblib")
+        feature_order = tuple(json.loads((path / "feature_schema.json").read_text(encoding="utf-8")))
+        meta = json.loads((path / "ensemble_meta.json").read_text(encoding="utf-8"))
+        fold_evals_path = path / "fold_evals.json"
+        fold_evals = json.loads(fold_evals_path.read_text(encoding="utf-8")) if fold_evals_path.exists() else []
+        return cls(
+            boosters=boosters,
+            feature_order=feature_order,
+            predict_num_threads=meta["predict_num_threads"],
+            fold_evals=fold_evals,
+        )
+
+    def save(self, path: str | Path) -> None:
+        path = Path(path)
+        path.mkdir(parents=True, exist_ok=True)
+        joblib.dump(self.boosters, path / "boosters.joblib")
+        (path / "feature_schema.json").write_text(json.dumps(list(self.feature_order), indent=2), encoding="utf-8")
+        (path / "ensemble_meta.json").write_text(
+            json.dumps({"predict_num_threads": self.predict_num_threads}), encoding="utf-8"
+        )
+        (path / "fold_evals.json").write_text(json.dumps(self.fold_evals, indent=2), encoding="utf-8")
+
+    def predict_one(self, feats: dict) -> float:
+        x = to_array(feats, self.feature_order).reshape(1, -1)
+        raw = [b.predict(x, num_threads=self.predict_num_threads)[0] for b in self.boosters]
+        sigm = [1.0 / (1.0 + np.exp(-r)) for r in raw]
+        return float(np.mean(sigm))
+
+
+@dataclass
+class CombinedModelEnsemble:
+    """Combinador implantável dos dois braços do ensemble (binário-R1 + rank, R3): média simples
+    dos dois `predict_one` em (0,1) -- a única combinação que um scorer causal em tempo real pode
+    computar por passo, sem acesso à seção transversal de outras séries no mesmo t (diferente do
+    "rank-average" via percentil OOF usado só para comparação offline, scripts/combine_oof.py)."""
+
+    binary: ModelEnsemble
+    rank: RankModelEnsemble
+
+    def predict_one(self, feats: dict) -> float:
+        return 0.5 * (self.binary.predict_one(feats) + self.rank.predict_one(feats))

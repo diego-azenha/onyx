@@ -26,20 +26,29 @@ from tqdm import tqdm
 from sbrt.config import DEFAULT_CONFIG_PATH, load_config
 from sbrt.state.h0 import fit_h0
 
-FEATURE_NAMES = [
+_BASE_NAMES = [
     "mu0", "sigma0", "sigma_e", "sigma_e_rob", "nu_hat", "rho1_e", "rho1_abs_e",
     "ar_r2", "n_h", "sigma_u", "q01", "q05", "q10", "q25", "q75", "q90", "q95", "q99", "has_seasonal",
 ]
+# F2 (docs/PROPOSTA_FEATURES_V2.md): a impressão digital estendida também é função APENAS do
+# histórico, então entra obrigatoriamente nesta checagem -- de nada adianta CE6 continuar ≈0,5 sobre
+# as 19 features antigas se as 9 novas vazarem o rótulo.
+_FINGERPRINT_NAMES = [
+    "hurst", "hill_xi", "acf_e2_l1", "acf_abs_mass", "acf_decay",
+    "spectral_slope", "ljungbox_abs", "volvol", "iqr_tail_ratio",
+]
+FEATURE_NAMES = _BASE_NAMES + [f"fp_{n}" for n in _FINGERPRINT_NAMES]
 
 
 def h0_to_row(h0) -> list:
     q = h0.q
-    return [
+    base = [
         h0.mu0, h0.sigma0, h0.sigma_e, h0.sigma_e_rob, h0.nu_hat, h0.rho1_e, h0.rho1_abs_e,
         h0.ar_r2, float(h0.n_h), h0.sigma_u,
         q["0.01"], q["0.05"], q["0.10"], q["0.25"], q["0.75"], q["0.90"], q["0.95"], q["0.99"],
         1.0 if h0.seasonal_lag is not None else 0.0,
     ]
+    return base + [float(h0.fingerprint.get(n, 0.0)) for n in _FINGERPRINT_NAMES]
 
 
 def main() -> None:

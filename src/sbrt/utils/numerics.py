@@ -7,7 +7,6 @@ bug "duas implementações que divergem depois de 500 passos por causa de um `if
 from __future__ import annotations
 
 import math
-from functools import lru_cache
 from typing import Sequence
 
 
@@ -35,11 +34,25 @@ def logsumexp(values: Sequence[float]) -> float:
     return finite_max + math.log(total)
 
 
-@lru_cache(maxsize=4096)
+_LGAMMA_CACHE: dict = {}
+
+
 def lgamma_cached(x: float) -> float:
     """math.lgamma com cache — plano §4.3: nu_n = nu0 + n_j cresce em passos inteiros, então os
-    mesmos argumentos reaparecem massivamente entre candidatos e passos."""
-    return math.lgamma(x)
+    mesmos argumentos reaparecem massivamente entre candidatos e passos.
+
+    Memo explícito em vez de `@lru_cache`: no notebook de submissão o pipeline é achatado em
+    `__main__`, e `functools._lru_cache_wrapper` se serializa POR REFERÊNCIA (nome qualificado). O
+    worker do loky (spawn) não tem esse nome no seu `__main__` e o `train()` paralelo morre com
+    `Can't get attribute 'lgamma_cached'`. Uma função normal + dict são serializados por VALOR pelo
+    cloudpickle e atravessam o fork/spawn intactos. Valores são idênticos aos do lru_cache."""
+    hit = _LGAMMA_CACHE.get(x)
+    if hit is not None:
+        return hit
+    if len(_LGAMMA_CACHE) >= 4096:  # mesmo teto do lru_cache anterior
+        _LGAMMA_CACHE.clear()
+    value = _LGAMMA_CACHE[x] = math.lgamma(x)
+    return value
 
 
 def ewma_update(prev: float, x: float, lam: float) -> float:

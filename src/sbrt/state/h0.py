@@ -11,6 +11,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from sbrt.state.calibration import compute_null_stats
+from sbrt.state.fingerprint import compute_fingerprint
+from sbrt.state.mmd import history_reference as mmd_history_reference
 from sbrt.utils.ring_buffer import RingBuffer
 
 if TYPE_CHECKING:
@@ -38,6 +41,11 @@ class H0Params:
     n_h: int
     last_hist_e: float
     lag_seed: np.ndarray
+    # --- proposta V2 (docs/PROPOSTA_FEATURES_V2.md), tudo calculado uma vez aqui e nunca no online ---
+    fingerprint: dict          # F2: descritores estendidos do regime H0 (state/fingerprint.py)
+    rff_href: np.ndarray       # F3: média de z(e) sobre o histórico, referência congelada do MMD
+    rff_href_joint: np.ndarray # F3: idem para o par (e_t, e_{t-1})
+    null_stats: dict           # F1: {feature: (mu, sd, min_t)} do nulo da própria série
 
     @property
     def lag_capacity(self) -> int:
@@ -163,6 +171,14 @@ def fit_h0(hist: np.ndarray, cfg: "Config") -> H0Params:
     lag_capacity = max(p, seasonal_lag or 0)
     lag_seed = hist[-lag_capacity:].copy()
 
+    # --- proposta V2: tudo abaixo é função APENAS do histórico (H0 por definição), calculado uma
+    # vez por série. Nada disso adiciona custo ao laço online. ---
+    fingerprint = compute_fingerprint(e_hist, hist, q, cfg)
+    rff_href, rff_href_joint = mmd_history_reference(e_hist, cfg)
+    null_stats = compute_null_stats(
+        e_hist, sorted_e_hist, sorted_abs_e_hist, rff_href, rff_href_joint, cfg
+    )
+
     return H0Params(
         phi=phi,
         c=c,
@@ -183,6 +199,10 @@ def fit_h0(hist: np.ndarray, cfg: "Config") -> H0Params:
         n_h=n_h,
         last_hist_e=last_hist_e,
         lag_seed=lag_seed,
+        fingerprint=fingerprint,
+        rff_href=rff_href,
+        rff_href_joint=rff_href_joint,
+        null_stats=null_stats,
     )
 
 

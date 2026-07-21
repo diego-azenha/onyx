@@ -62,6 +62,103 @@ class ConformalConfig:
 
 
 @dataclass(frozen=True)
+class RankTwoSampleConfig:
+    windows: tuple  # R4 (docs/PARECER_AUDITORIA_ONYX.md §6-R4): janelas para os testes de duas
+    # amostras rank-based janela-vs-histórico (localização/dispersão Wilcoxon-like + forma chi2)
+
+
+@dataclass(frozen=True)
+class DependenceConfig:
+    """P1 (docs/INVESTIGACAO_FALHAS_V3.md): dependência serial não-linear/multi-lag."""
+    windows: tuple      # janelas para ρ₁ de |e| e e² (clustering de volatilidade)
+    mass_window: int    # janela para a massa multi-lag Σρ_k²
+    mass_max_lag: int   # L da massa multi-lag
+
+
+@dataclass(frozen=True)
+class LMomentConfig:
+    """P2 (docs/INVESTIGACAO_FALHAS_V3.md): forma de cauda dinâmica via L-momentos."""
+    windows: tuple      # janelas para L-skewness/L-kurtosis
+
+
+@dataclass(frozen=True)
+class VarLocConfig:
+    """P3 (docs/INVESTIGACAO_FALHAS_V3.md): variância localizada no changepoint."""
+    scales: tuple       # escalas de janela para o max/min do z de variância
+    recent: int         # janela recente do contraste recente-vs-defasado
+    lagged: int         # comprimento da janela defasada
+
+
+@dataclass(frozen=True)
+class JumpConfig:
+    """P4 (docs/INVESTIGACAO_FALHAS_V3.md): bipower/saltos + leverage."""
+    windows: tuple      # janelas para RV/BV, semivariância, leverage
+
+
+@dataclass(frozen=True)
+class BOCPDConfig:
+    """BOCPD (Adams-MacKay 2007): posterior de run-length de variância (docs/RESULTADOS_P1_P4.md)."""
+    r_max: int          # truncagem do run-length (O(R_max)/passo)
+    hazard_lambda: float  # hazard H = 1/lambda (prior geométrico no run-length)
+    alpha0: float       # prior Inverse-Gamma da variância do regime
+    beta0: float
+    recent_k: int       # cp_prob = soma de p(r) para r < recent_k
+
+
+@dataclass(frozen=True)
+class RankObjectiveConfig:
+    objective: str  # "lambdarank" ou "rank_xendcg" -- R3 (parecer §6-R3), membro paralelo do
+    # ensemble binário, query=passo t.
+    label_gain: tuple
+    truncation_level_cap: int  # `lambdarank_truncation_level` = min(maior grupo do fold, este cap).
+    # MEDIDO (retreino real, 2026-07-20): t<=100 mantém TODAS as ~10000 séries vivas (thinning só
+    # começa em t>100, configs/default.yaml:thinning), então o maior grupo de um fold chega a ~8000
+    # linhas -- truncation_level sem cap (a recomendação literal do parecer, "≥ tamanho máximo de
+    # grupo") faz o custo por grupo escalar ~group_size×truncation_level e trava o treino (processo
+    # rodou >4h sem terminar, matado manualmente). Um cap moderado ainda cobre a imensa maioria dos
+    # grupos por inteiro (grupos ficam pequenos rapidamente após o thinning) e mantém o treino
+    # tratável; grupos maiores que o cap ficam com gradiente pleno só no topo -- risco documentado,
+    # aceito por tratabilidade (ver docstring de model/train.py:train_rank).
+
+
+@dataclass(frozen=True)
+class MMDConfig:
+    """F3 (docs/PROPOSTA_FEATURES_V2.md): MMD de kernel via Random Fourier Features."""
+    n_features: int
+    bandwidth: float
+    lambda_vfast: float  # janela efetiva curta -- existe para o regime de t pequeno, onde
+    # `lambda_fast`/`lambda_slow` ainda não aqueceram e a família ficava 100% NaN
+    lambda_fast: float
+    lambda_slow: float
+
+
+@dataclass(frozen=True)
+class MultiScaleConfig:
+    """F4: decomposição causal de energia por escala (Haar diádico)."""
+    n_scales: int
+    ewma_lambda: float
+    warmup_min_coeffs: int
+
+
+@dataclass(frozen=True)
+class H0FingerprintConfig:
+    """F2: descritores estendidos do regime H0 (state/fingerprint.py)."""
+    hill_frac: float
+    acf_max_lag: int
+    hurst_scales: tuple
+    volvol_window: int
+
+
+@dataclass(frozen=True)
+class CalibrationConfig:
+    """F1: calibração de nulo por série (state/calibration.py). `shrink_pseudo` é a pseudo-contagem
+    de encolhimento do desvio empírico para o teórico i.i.d. — necessária porque uma janela w sobre
+    um histórico n_h só tem ~n_h/w janelas independentes."""
+    enabled: bool
+    shrink_pseudo: float
+
+
+@dataclass(frozen=True)
 class FeaturesConfig:
     warmup_min_n: int
 
@@ -84,6 +181,17 @@ class LightGBMConfig:
     train_num_threads: int
     predict_num_threads: int
     n_folds: int
+    feval_max_valid_rows: int | None = None  # R2 (parecer §6-R2): subamostra determinística do fold
+    # de validação usada pelo feval de AUC-por-passo a cada rodada de boosting; None = fold inteiro.
+    early_stopping_metric: str = "logloss"  # "logloss" ou "ts_auc_by_t" -- qual das duas métricas do
+    # feval (model/train.py:_make_fold_feval) governa a parada via first_metric_only. MEDIDO
+    # (retreino real, 2026-07-20): "ts_auc_by_t" sozinho treina 100-236 rodadas (vs. 61-89 com
+    # logloss) perseguindo o argmax de uma métrica rank-based cujo ruído entre rodadas é dominado
+    # pelo n efetivo de ~10^4 séries (não pelo número de linhas) -- isso produziu uma regressão real
+    # e estatisticamente significativa na TS-AUC OOF completa (Delta -0.0099, IC exclui 0) mesmo
+    # usando o fold de validação inteiro no feval (sem subamostra). "logloss" (default) reproduz o
+    # comportamento original, validado; "ts_auc_by_t" fica disponível para experimentação futura com
+    # estabilização adicional (ex.: min_delta, suavização), não para uso direto.
 
 
 @dataclass(frozen=True)
@@ -134,8 +242,19 @@ class Config:
     cusum: CusumConfig
     bayes: BayesConfig
     conformal: ConformalConfig
+    rank_twosample: RankTwoSampleConfig
+    dependence: DependenceConfig
+    lmoments: LMomentConfig
+    varloc: VarLocConfig
+    jumps: JumpConfig
+    bocpd: BOCPDConfig
+    mmd: MMDConfig
+    multiscale: MultiScaleConfig
+    h0_fingerprint: H0FingerprintConfig
+    calibration: CalibrationConfig
     features: FeaturesConfig
     lightgbm: LightGBMConfig
+    rank: RankObjectiveConfig
     thinning: ThinningConfig
     model: ModelConfig
     fallback: FallbackConfig
@@ -158,8 +277,19 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         cusum=CusumConfig(**raw["cusum"]),
         bayes=BayesConfig(**raw["bayes"]),
         conformal=ConformalConfig(**raw["conformal"]),
+        rank_twosample=RankTwoSampleConfig(**raw["rank_twosample"]),
+        dependence=DependenceConfig(**raw["dependence"]),
+        lmoments=LMomentConfig(**raw["lmoments"]),
+        varloc=VarLocConfig(**raw["varloc"]),
+        jumps=JumpConfig(**raw["jumps"]),
+        bocpd=BOCPDConfig(**raw["bocpd"]),
+        mmd=MMDConfig(**raw["mmd"]),
+        multiscale=MultiScaleConfig(**raw["multiscale"]),
+        h0_fingerprint=H0FingerprintConfig(**raw["h0_fingerprint"]),
+        calibration=CalibrationConfig(**raw["calibration"]),
         features=FeaturesConfig(**raw["features"]),
         lightgbm=LightGBMConfig(**raw["lightgbm"]),
+        rank=RankObjectiveConfig(**raw["rank"]),
         thinning=ThinningConfig(**raw["thinning"]),
         model=ModelConfig(**raw["model"]),
         fallback=FallbackConfig(**raw["fallback"]),

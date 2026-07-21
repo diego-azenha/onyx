@@ -76,7 +76,15 @@ def evaluate(
     control_trajectories: list | None,
     tau: int | None,
     cfg,
+    reference_trajectories: list | None = None,
 ) -> GateResult:
+    """`reference_trajectories`: painel i.i.d. N(0,1) sem quebra, mesmas seeds/T (R5, parecer
+    §6-R5) — só usado para os cenários em `RELATIVE_GATE_SCENARIOS` (t2/t6/t9/t10/t13), cujo gate
+    original é um nível ABSOLUTO e por isso incompatível com um calibrador supervisionado não
+    calibrado em [0,1] (model/predict.py). Quando fornecido, o nível vira um GAP contra o painel
+    (mesma estrutura de `mediana(cenário) − mediana(painel) ≤ x` do parecer); quando None (modo
+    fallback, que É calibrado em [0,1] por construção), o gate absoluto de sempre é usado — mantém
+    compatibilidade retroativa exata com `tests/robustness/test_gates.py`."""
     spec = dict(cfg.gates.scenarios.get(scenario_id, {}))
     details: dict = {}
 
@@ -84,6 +92,8 @@ def evaluate(
         return GateResult(scenario_id, False, {"error": "NaN/Inf em trajetórias do cenário"})
     if control_trajectories is not None and _has_nan_or_inf(control_trajectories):
         return GateResult(scenario_id, False, {"error": "NaN/Inf em trajetórias de controle"})
+    if reference_trajectories is not None and _has_nan_or_inf(reference_trajectories):
+        return GateResult(scenario_id, False, {"error": "NaN/Inf em trajetórias do painel de referência"})
 
     if scenario_id == "t1":
         lo, _ = _median_range(trajectories, spec["t_from"], max(len(t) for t in trajectories))
@@ -95,8 +105,15 @@ def evaluate(
         pre_means = [float(np.mean(traj[: tau - 1])) for traj in trajectories if tau and tau > 1]
         mean_prebreak = float(np.median(pre_means)) if pre_means else math.nan
         slope = _trend_slope([traj[: tau - 1] for traj in trajectories]) if tau and tau > 1 else 0.0
-        details = {"mean_prebreak": mean_prebreak, "slope": slope}
-        passed = mean_prebreak <= spec["mean_prebreak_max"] and abs(slope) <= cfg.gates.drift_slope_abs_max
+        if reference_trajectories is not None:
+            ref_means = [float(np.mean(traj[: tau - 1])) for traj in reference_trajectories if tau and tau > 1]
+            ref_prebreak = float(np.median(ref_means)) if ref_means else math.nan
+            gap = mean_prebreak - ref_prebreak
+            details = {"mean_prebreak": mean_prebreak, "reference_prebreak": ref_prebreak, "gap": gap, "slope": slope}
+            passed = gap <= spec["mean_prebreak_max"] and abs(slope) <= cfg.gates.drift_slope_abs_max
+        else:
+            details = {"mean_prebreak": mean_prebreak, "slope": slope}
+            passed = mean_prebreak <= spec["mean_prebreak_max"] and abs(slope) <= cfg.gates.drift_slope_abs_max
 
     elif scenario_id in ("t3", "t5", "t5b", "t7", "t8"):
         t = tau + spec["t_offset"]
@@ -115,14 +132,26 @@ def evaluate(
         max_len = max(len(t) for t in trajectories)
         final_mean = _mean_at(trajectories, max_len)
         slope = _trend_slope(trajectories)
-        details = {"final_mean": final_mean, "slope": slope}
-        passed = final_mean <= spec["mean_max"] and abs(slope) <= cfg.gates.drift_slope_abs_max
+        if reference_trajectories is not None:
+            ref_final_mean = _mean_at(reference_trajectories, max(len(t) for t in reference_trajectories))
+            gap = final_mean - ref_final_mean
+            details = {"final_mean": final_mean, "reference_final_mean": ref_final_mean, "gap": gap, "slope": slope}
+            passed = gap <= spec["mean_max"] and abs(slope) <= cfg.gates.drift_slope_abs_max
+        else:
+            details = {"final_mean": final_mean, "slope": slope}
+            passed = final_mean <= spec["mean_max"] and abs(slope) <= cfg.gates.drift_slope_abs_max
 
     elif scenario_id == "t9":
         final_mean = _mean_at(trajectories, 999)
         decay = _mean_at(trajectories, 210) - _mean_at(trajectories, 250)
-        details = {"final_mean": final_mean, "decay": decay}
-        passed = final_mean <= spec["final_max"] and decay >= spec["decay_min"]
+        if reference_trajectories is not None:
+            ref_final_mean = _mean_at(reference_trajectories, 999)
+            gap = final_mean - ref_final_mean
+            details = {"final_mean": final_mean, "reference_final_mean": ref_final_mean, "gap": gap, "decay": decay}
+            passed = gap <= spec["final_max"] and decay >= spec["decay_min"]
+        else:
+            details = {"final_mean": final_mean, "decay": decay}
+            passed = final_mean <= spec["final_max"] and decay >= spec["decay_min"]
 
     elif scenario_id == "t11":
         s10 = _mean_at(trajectories, 10)
@@ -137,8 +166,14 @@ def evaluate(
 
     elif scenario_id == "t13":
         decay = _median_at(trajectories, 260) - _median_at(trajectories, 600)
-        details = {"decay": decay}
-        passed = decay >= spec["decay_min"]
+        if reference_trajectories is not None:
+            ref_decay = _median_at(reference_trajectories, 260) - _median_at(reference_trajectories, 600)
+            gap = decay - ref_decay
+            details = {"decay": decay, "reference_decay": ref_decay, "gap": gap}
+            passed = gap >= spec["decay_min"]
+        else:
+            details = {"decay": decay}
+            passed = decay >= spec["decay_min"]
 
     else:
         raise ValueError(f"cenário desconhecido: {scenario_id!r}")

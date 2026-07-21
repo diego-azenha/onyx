@@ -19,7 +19,20 @@ SCENARIO_IDS = (
 # cenários com par de controle (gates de gap de mediana precisam do gêmeo sem quebra)
 CONTROLLED_SCENARIOS = ("t1", "t3", "t4", "t5", "t5b", "t7", "t8")
 
+# Cenários cujo gate original é um nível ABSOLUTO (assume score calibrado em [0,1]) em vez de um gap
+# entre duas trajetórias — exatamente os que o parecer de auditoria (§6-R5, DIAGNOSTICO rec. 1(b))
+# identifica como incompatíveis com o calibrador supervisionado (resíduo sem offset, deliberadamente
+# não calibrado em escala absoluta, model/predict.py). Para estes, `robustness/gates.py` sabe computar
+# um gate RELATIVO (gap contra um painel de referência i.i.d. N(0,1) sem quebra, mesmas seeds/T) quando
+# `reference_trajectories` é passado a `evaluate`; sem isso, cai no gate absoluto de sempre (modo
+# fallback, que É calibrado em [0,1] por construção, plano §8.5).
+RELATIVE_GATE_SCENARIOS = ("t2", "t6", "t9", "t10", "t13")
+
 N_H_DEFAULT = 2000
+
+# comprimento T do segmento online de cada cenário em RELATIVE_GATE_SCENARIOS — o painel de
+# referência precisa do mesmo T para que os gaps por passo sejam comparáveis (mesma seed, mesmo t).
+_REFERENCE_T = {"t2": 600, "t6": 1000, "t9": 1000, "t10": 1000, "t13": 600}
 
 
 def _garch11(rng: np.random.RandomState, n: int, omega=0.05, alpha=0.10, beta=0.85, burn=200):
@@ -212,3 +225,16 @@ def generate(scenario_id: str, seed: int, cfg=None):
     rng = np.random.RandomState(seed)
     hist, online, tau = _GENERATORS[base_id](rng, control)
     return np.asarray(hist, dtype=np.float64), np.asarray(online, dtype=np.float64), tau
+
+
+def generate_reference_panel(scenario_id: str, seed: int, cfg=None):
+    """Painel de referência para gates relativos (R5): histórico + online i.i.d. N(0,1), SEM
+    quebra/efeito nenhum, com a MESMA seed e o MESMO T do cenário `scenario_id` — mede o piso de
+    falso-positivo do calibrador num sinal honestamente vazio, servindo de âncora comparável para
+    cenários cujo gate original era um nível absoluto (RELATIVE_GATE_SCENARIOS)."""
+    if scenario_id not in _REFERENCE_T:
+        raise ValueError(f"sem painel de referência definido para {scenario_id!r}")
+    rng = np.random.RandomState(seed)
+    hist = rng.randn(N_H_DEFAULT)
+    online = rng.randn(_REFERENCE_T[scenario_id])
+    return np.asarray(hist, dtype=np.float64), np.asarray(online, dtype=np.float64), None

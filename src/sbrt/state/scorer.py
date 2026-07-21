@@ -13,8 +13,17 @@ from typing import TYPE_CHECKING
 
 from sbrt.state.accumulators import AccumulatorBlock
 from sbrt.state.bayes_filter import BayesFilterBlock
+from sbrt.state.bocpd import BOCPDBlock
+from sbrt.state.calibration import apply_calibration
 from sbrt.state.conformal import ConformalBlock
 from sbrt.state.cusum import CusumBlock
+from sbrt.state.dependence import DependenceBlock
+from sbrt.state.jumps import JumpBlock
+from sbrt.state.lmoments import LMomentBlock
+from sbrt.state.mmd import MMDBlock
+from sbrt.state.multiscale import MultiScaleBlock
+from sbrt.state.rank_twosample import RankTwoSampleBlock
+from sbrt.state.varloc import VarLocBlock
 from sbrt.state.h0 import H0Params, seed_lag_buffer, whiten_step
 from sbrt.utils.numerics import ewma_update
 from sbrt.utils.ring_buffer import RingBuffer
@@ -25,7 +34,23 @@ if TYPE_CHECKING:
 
 
 def default_blocks() -> list:
-    return [AccumulatorBlock(), CusumBlock(), BayesFilterBlock(), ConformalBlock()]
+    return [
+        AccumulatorBlock(),
+        CusumBlock(),
+        BayesFilterBlock(),
+        ConformalBlock(),
+        RankTwoSampleBlock(),
+        MMDBlock(),          # F3 (proposta V2): MMD de kernel via RFF, marginal e conjunto
+        MultiScaleBlock(),   # F4 (proposta V2): energia por escala (Haar diádico causal)
+        DependenceBlock(),   # P1 (INVESTIGACAO §4.1): dependência não-linear/multi-lag
+        VarLocBlock(),       # P3 (INVESTIGACAO §3): variância localizada no changepoint
+        JumpBlock(),         # P4 (INVESTIGACAO §4.3): bipower/saltos + leverage (precisão T6/T9)
+        BOCPDBlock(),        # (RESULTADOS_P1_P4): posterior de run-length de variância (localização
+                             # principiada -- a versão correta do varloc, que foi a família mais valiosa)
+    ]
+    # P2 (LMomentBlock) foi PODADA aqui: medida em 0,51% de SHAP transversal por ~65 µs/passo (o mais
+    # caro do banco) -- ROI claramente negativo (docs/RESULTADOS_P1_P4.md + SHAP do V4). O bloco e o
+    # teste continuam em state/lmoments.py, reabríveis, mas fora do pipeline.
 
 
 class StreamScorer:
@@ -93,6 +118,12 @@ class StreamScorer:
         feats["meta_h0_q99"] = h0.q["0.99"]
         feats["meta_h0_scale_ratio"] = h0.sigma_e_rob / h0.sigma_e
 
+        # F2 (proposta V2): impressão digital estendida do regime H0 — constantes por série,
+        # calculadas em fit_h0, custo zero por passo. São condicionadores (CE6 nulo como efeito
+        # principal), e a família meta_h0 já é a mais usada do modelo (34,3% do |SHAP|).
+        for key, value in h0.fingerprint.items():
+            feats[f"meta_h0_{key}"] = value
+
         age_map = feats.get("bayes_age_map_h0100")
         age_cusum = feats.get("cusum_age_mean_pos_d050")
         if age_map is not None and age_cusum is not None and not (math.isnan(age_map) or math.isnan(age_cusum)):
@@ -101,6 +132,11 @@ class StreamScorer:
         else:
             feats["meta_locator_diff"] = math.nan
             feats["meta_locator_min"] = math.nan
+
+        # F1 (proposta V2): versões `_cal` padronizadas contra o nulo da PRÓPRIA série, medido sobre
+        # o histórico em fit_h0. Aplicado por último, depois que todos os blocos já emitiram seus
+        # valores crus. Ver a docstring de state/calibration.py para o porquê.
+        apply_calibration(feats, self.h0.null_stats, t)
 
         return feats
 
