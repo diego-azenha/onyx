@@ -19,11 +19,13 @@ make smoke           # runs adapter/platform.py end to end (crunch test)
 
 ## Documentation
 
-- [`docs/PLANO_TECNICO.md`](docs/PLANO_TECNICO.md) — theoretical/methodological plan (source of truth for
-  formulas, hyperparameters, gates). Referenced throughout the code as `§N`.
-- [`docs/PLANO_REPOSITORIO.md`](docs/PLANO_REPOSITORIO.md) — engineering plan (directory layout, module
-  contracts, test strategy, execution phases).
-- [`docs/CONTRACTS.md`](docs/CONTRACTS.md) — frozen interfaces for `src/sbrt/*`.
+- [`docs/MODELO.md`](docs/MODELO.md) — the model: formulation, design decisions, formulas,
+  hyperparameters, gates. Referenced throughout the code as `§N` (numbering preserved from the
+  original technical plan).
+- [`docs/HISTORICO.md`](docs/HISTORICO.md) — every change made over time, with measured results and
+  the decision taken (what worked, what was reverted, what not to retry).
+- [`docs/NOTAS_AGENTES.md`](docs/NOTAS_AGENTES.md) — operational notes for whoever edits the repo:
+  invariants, frozen contracts, commands, measurement protocol, known pitfalls, open issues.
 
 ## Key design decision
 

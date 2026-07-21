@@ -1,12 +1,22 @@
-numpy>=1.26
-pandas>=2.0
-scikit-learn>=1.3
-lightgbm>=4.0
-pyyaml>=6.0
-tqdm>=4.65
-joblib>=1.3
-scipy>=1.11
-matplotlib>=3.7
+# extracted from a notebook
 
-# dev / test
-pytest>=7.4
+## third-party
+crunch-cli  # alias of crunch
+joblib
+lightgbm
+numpy
+pandas
+PyYAML  # alias of yaml
+scikit-learn  # alias of sklearn
+scipy
+tqdm
+
+## standard
+#bisect
+#collections
+#dataclasses
+#json
+#math
+#os
+#pathlib
+#typing

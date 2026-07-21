@@ -72,12 +72,15 @@ def test_scale_invariance(cfg):
     assert abs(r1["lmom_lkurt_w100"] - r2["lmom_lkurt_w100"]) < 1e-9
 
 
-def test_history_equivalence(cfg):
-    """LMomentBlock foi PODADO do pipeline (scorer/calibration) por ROI negativo, mas o bloco
-    continua funcional standalone -- o cálculo sobre o histórico bate com uma re-execução do bloco.
-    (Não checamos mais h0.null_stats: a calibração dele foi removida junto com o desligamento.)"""
+def test_calibration_and_history_equivalence(cfg):
+    """LMomentBlock está no pipeline (conjunto do V4). O cálculo vetorizado sobre o histórico — que
+    alimenta o nulo por série de F1 — tem de bater com uma re-execução do bloco online, senão as
+    features `_cal` ficam silenciosamente envenenadas (docs/MODELO.md §3.1-10)."""
     from sbrt.state.lmoments import history_null_series
     rng = np.random.RandomState(6)
+    h0 = fit_h0(rng.randn(3000), cfg)
+    assert "lmom_lkurt_w100" in h0.null_stats and "lmom_lskew_w050" in h0.null_stats
+
     e_hist = rng.randn(1500)
     series = history_null_series(e_hist, cfg)
     rows = _run(_new(cfg), e_hist)

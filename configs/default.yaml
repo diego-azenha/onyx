@@ -49,16 +49,19 @@ conformal:                            # plano §4.2 #23
 rank_twosample:                       # R4 (docs/PARECER_AUDITORIA_ONYX.md §6-R4): duas amostras
   windows: [25, 100]                  # rank-based janela-vs-histórico -- analogo causal de 2025
 
-dependence:                           # P1 (docs/INVESTIGACAO_FALHAS_V3.md): dependencia nao-linear
-  windows: [100]                      # rho1 de |e| e e^2 -- w050 PODADA (morta no SHAP do V4, rank 164+)
+dependence:                           # P1 (docs/HISTORICO.md §8): dependencia nao-linear
+  windows: [50, 100]                  # rho1 de |e| e e^2. w050 foi podada no V5, que regrediu por
+                                      # R0 e foi revertido (docs/HISTORICO.md §9); voltou aqui.
   mass_window: 100                    # massa multi-lag Sum rho_k^2
   mass_max_lag: 5
 
-lmoments:                             # P2 -- PODADA do pipeline (0,51% SHAP por ~65us; ver scorer.py).
-  windows: [50, 100]                  # config mantida para o bloco/teste standalone reabrivel
+lmoments:                             # P2 (docs/HISTORICO.md §8): forma de cauda dinamica. Foi podada
+  windows: [50, 100]                  # no V5 (~65us/passo por 0,51% de SHAP), mas o V5 regrediu por
+                                      # R0 e foi revertido inteiro (§9) -- de volta no pipeline.
 
-bocpd:                                # BOCPD (Adams-MacKay): posterior de run-length de variancia
-  r_max: 256                          # ~30 us/passo (medido); localizacao principiada (vs varloc heuristico)
+bocpd:                                # ESTACIONADO fora de default_blocks: entrou no V5, que regrediu
+  r_max: 256                          # por R0 (§9). Config preservada para reabrir o experimento que
+                                      # separa BOCPD da poda (V4 + BOCPD). ~30 us/passo medido.
   hazard_lambda: 250.0                # H = 1/lambda
   alpha0: 2.0                         # prior IG -> preditiva t_4 (variancia 1, robusta a cauda)
   beta0: 1.0

@@ -28,9 +28,9 @@ def test_scorer_feature_order_stable_and_no_leakage_of_T(cfg):
     scorer = StreamScorer(h0, default_blocks(), None, cfg)
     feats = scorer.update_features(float(rng.randn()))
     assert "T" not in feats and "t_total" not in feats
-    # 183 (V4) − L-momentos podadas (8) − dep w050 podada (2 cruas + 2 cal = 4)
-    # + BOCPD (4 cruas + 3 cal = 7) = 178
-    assert len(feats) == 178
+    # 183 = conjunto de features do V4, o melhor modelo medido (docs/HISTORICO.md §1). O V5 tinha
+    # 178 (−8 L-momentos, −4 dep w050, +7 BOCPD) e regrediu por R0 — revertido (§9).
+    assert len(feats) == 183
 
 
 def test_scorer_new_instance_per_series_gives_same_result_regardless_of_order(cfg):

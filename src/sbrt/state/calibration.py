@@ -55,7 +55,7 @@ from typing import NamedTuple
 
 import numpy as np
 
-from sbrt.state import bocpd as bocpd_mod
+from sbrt.state import lmoments as lmom_mod
 from sbrt.state import dependence as dep_mod
 from sbrt.state import jumps as jump_mod
 from sbrt.state import mmd as mmd_mod
@@ -216,12 +216,13 @@ def compute_null_stats(
         _add(out, name, np.asarray(series, dtype=np.float64), min_t=w, n_eff=n_h / w,
              theory=None, pseudo=0.0, kind=kind, window=w)
 
-    # --- BOCPD (localização principiada): nulo empírico da própria série -- uma série ruidosa
-    # acumula changepoints espúrios no histórico, então a versão calibrada só acende no excesso. ---
-    bocpd_series = bocpd_mod.history_null_series(e, cfg)
-    for name, series in bocpd_series.items():
-        _add(out, name, np.asarray(series, dtype=np.float64), min_t=cfg.features.warmup_min_n,
-             n_eff=len(series), theory=None, pseudo=0.0)
+    # --- L-momentos (P2): forma de cauda robusta; nulo empírico da própria série (uma série de cauda
+    # pesada tem L-kurtosis alta no seu próprio histórico -> a calibrada só acende no excesso). ---
+    lmom_series = lmom_mod.history_null_series(e, cfg)
+    for name, series in lmom_series.items():
+        w = int(name.rsplit("_w", 1)[1])
+        _add(out, name, np.asarray(series, dtype=np.float64), min_t=w, n_eff=n_h / w,
+             theory=None, pseudo=0.0, kind="rho", window=w)
 
     # --- variância localizada (P3): max/min_z já são z-scores; nulo empírico corrige a inflação por
     # curtose da série (D-10). recent_vs_lagged só existe com a janela cheia. ---

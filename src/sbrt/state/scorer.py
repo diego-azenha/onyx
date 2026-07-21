@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING
 
 from sbrt.state.accumulators import AccumulatorBlock
 from sbrt.state.bayes_filter import BayesFilterBlock
-from sbrt.state.bocpd import BOCPDBlock
 from sbrt.state.calibration import apply_calibration
 from sbrt.state.conformal import ConformalBlock
 from sbrt.state.cusum import CusumBlock
@@ -43,14 +42,20 @@ def default_blocks() -> list:
         MMDBlock(),          # F3 (proposta V2): MMD de kernel via RFF, marginal e conjunto
         MultiScaleBlock(),   # F4 (proposta V2): energia por escala (Haar diádico causal)
         DependenceBlock(),   # P1 (INVESTIGACAO §4.1): dependência não-linear/multi-lag
+        LMomentBlock(),      # P2 (INVESTIGACAO §4.2): forma de cauda dinâmica (L-momentos)
         VarLocBlock(),       # P3 (INVESTIGACAO §3): variância localizada no changepoint
         JumpBlock(),         # P4 (INVESTIGACAO §4.3): bipower/saltos + leverage (precisão T6/T9)
-        BOCPDBlock(),        # (RESULTADOS_P1_P4): posterior de run-length de variância (localização
-                             # principiada -- a versão correta do varloc, que foi a família mais valiosa)
     ]
-    # P2 (LMomentBlock) foi PODADA aqui: medida em 0,51% de SHAP transversal por ~65 µs/passo (o mais
-    # caro do banco) -- ROI claramente negativo (docs/RESULTADOS_P1_P4.md + SHAP do V4). O bloco e o
-    # teste continuam em state/lmoments.py, reabríveis, mas fora do pipeline.
+    # Este é o conjunto de blocos do V4 -- o melhor modelo medido do projeto (docs/HISTORICO.md §1).
+    #
+    # O BOCPDBlock (state/bocpd.py) esteve aqui no V5, junto com a poda de LMomentBlock e de
+    # dependence.windows=[50] (argumento de ROI de latência). O pacote foi medido por R0 e REGREDIU:
+    # Delta geral -0,0042 [-0,0095, +0,0006] e o bucket 50<t<=150 significativamente pior
+    # (-0,0114, IC exclui 0) -- artifacts/reports/compare_v5_vs_v4.json. Pela regra de decisão de R0
+    # (adotar só se o IC excluir 0 A FAVOR), V5 não passa e foi revertido (docs/HISTORICO.md §9).
+    #
+    # O bloco e o teste continuam em state/bocpd.py, reabríveis: o experimento que separa as duas
+    # mudanças empacotadas no V5 (V4 + BOCPD, SEM a poda) nunca foi rodado.
 
 
 class StreamScorer:

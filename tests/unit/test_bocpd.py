@@ -70,13 +70,14 @@ def test_map_runlen_grows_under_stationarity(cfg):
     assert rows[-1]["bocpd_map_runlen"] > rows[100]["bocpd_map_runlen"]
 
 
-def test_calibration_and_history_equivalence(cfg):
+def test_history_equivalence(cfg):
+    """BOCPD está ESTACIONADO (fora de `default_blocks`, sem entrada em `compute_null_stats`): o
+    pacote que o introduziu — V5 — regrediu por R0 e foi revertido (docs/HISTORICO.md §9). O bloco
+    segue testado para poder ser reaberto: a equivalência online × nulo-de-histórico é o invariante
+    que precisa valer antes de qualquer novo experimento com ele."""
     from sbrt.state.bocpd import history_null_series
     rng = np.random.RandomState(4)
-    h0 = fit_h0(rng.randn(3000), cfg)
-    assert "bocpd_regime_var_ln" in h0.null_stats
-    assert "bocpd_cp_prob" in h0.null_stats
-    assert "bocpd_map_runlen" not in h0.null_stats  # localizador de idade, não calibrado
+    fit_h0(rng.randn(3000), cfg)  # não deve quebrar com o bloco fora do pipeline
 
     e_hist = rng.randn(1200)
     series = history_null_series(e_hist, cfg)

@@ -52,8 +52,9 @@ def test_rolling_autocorr_matches_naive(cfg):
 def test_features_finite_after_warmup(cfg):
     rng = np.random.RandomState(1)
     feats = _run(_new_block(cfg), rng.randn(300))[-1]
-    # janela w050 podada (morta no SHAP do V4): sobram absrho1/sqrho1 w100 + mass_abs + mass_evol
-    assert len(feats) == 4
+    # absrho1/sqrho1 nas janelas {50,100} + mass_abs + mass_evol (conjunto do V4; a poda de w050
+    # veio no V5, que regrediu por R0 e foi revertido — docs/HISTORICO.md §9)
+    assert len(feats) == 6
     assert all(math.isfinite(v) for v in feats.values())
 
 
