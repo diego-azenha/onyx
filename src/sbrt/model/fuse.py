@@ -44,8 +44,15 @@ def _scale_leaves(block: str, k: int) -> str:
     return re.sub(r"leaf_value=([^\n]+)", repl, block)
 
 
-def fuse_boosters(boosters: list) -> lgb.Booster:
-    """Concatena as árvores de todos os boosters, com folhas divididas por len(boosters)."""
+def fuse_boosters(boosters: list, verify: bool = True, tol: float = 1e-9) -> lgb.Booster:
+    """Concatena as árvores de todos os boosters, com folhas divididas por len(boosters).
+
+    `verify=True` (padrão) confere numericamente que o raw do fundido é a média dos raws dos
+    originais, e levanta `RuntimeError` se não for. **Isto não é zelo excessivo:** a fusão reescreve
+    a linha `tree_sizes` por regex, e se o padrão não casar (outra versão do LightGBM, outro formato)
+    o `re.sub` devolve a string INALTERADA, sem erro — o modelo resultante carrega e prediz coisa
+    errada em silêncio. Este caminho roda na nuvem, onde ninguém está olhando; falhar alto é
+    infinitamente melhor que submeter um modelo corrompido."""
     if len(boosters) == 1:
         return boosters[0]
     k = len(boosters)
@@ -63,5 +70,27 @@ def fuse_boosters(boosters: list) -> lgb.Booster:
     # `tree_sizes` tem de bater com o tamanho em BYTES de cada bloco: o carregador do LightGBM o usa
     # para fatiar o arquivo, e um valor errado corrompe a leitura silenciosamente.
     sizes = " ".join(str(len(t.encode("utf-8"))) for t in trees)
-    head = re.sub(r"^tree_sizes=.*$", f"tree_sizes={sizes}", head0, count=1, flags=re.M)
-    return lgb.Booster(model_str=head + "".join(trees) + tail0)
+    head, n_sub = re.subn(r"^tree_sizes=.*$", f"tree_sizes={sizes}", head0, count=1, flags=re.M)
+    if n_sub != 1:
+        raise RuntimeError(
+            "fuse_boosters: linha `tree_sizes=` não encontrada no modelo do LightGBM. O formato "
+            "mudou; a fusão não é segura. Trate os boosters sem fundir (K chamadas de predict)."
+        )
+    fused = lgb.Booster(model_str=head + "".join(trees) + tail0)
+
+    if verify:
+        import numpy as np
+
+        n_feat = boosters[0].num_feature()
+        x = np.linspace(-3.0, 3.0, 32 * n_feat, dtype=np.float64).reshape(32, n_feat)
+        esperado = np.column_stack(
+            [b.predict(x, raw_score=True, num_threads=1) for b in boosters]
+        ).mean(axis=1)
+        obtido = fused.predict(x, raw_score=True, num_threads=1)
+        err = float(np.abs(esperado - obtido).max())
+        if not (err <= tol):
+            raise RuntimeError(
+                f"fuse_boosters: fusão INVÁLIDA (max |raw_fundido - media_raws| = {err:.3e} > {tol:.0e}). "
+                "O modelo fundido NÃO representa a média dos originais — não usar."
+            )
+    return fused
