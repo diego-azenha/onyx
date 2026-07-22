@@ -244,3 +244,44 @@ class AccumulatorBlock:
 
 def _norm_cdf(x: float) -> float:
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def history_null_series(
+    e_hist, e_vol_hist, h0: "H0Params", cfg: "Config", restart_every: int,
+    max_reps: int = 0, wanted: frozenset = frozenset(),
+) -> dict:
+    """Réplicas com reinício do próprio AccumulatorBlock sobre o histórico (F1.a). Mesmo contrato e
+    mesma justificativa de `cusum.history_null_series` — ver aquela docstring.
+
+    Aqui o motivo de reiniciar é mais forte ainda para `accum_global_rho1_fz`, que é de janela
+    EXPANSIVA: uma passada contínua produz um único caminho que vagueia devagar, e o dp empírico
+    desse caminho não estima o dp MARGINAL da estatística no passo t (é uma amostra de tamanho
+    efetivo ~1, não n_h). Só réplicas independentes dão o nulo certo."""
+    e = np.asarray(e_hist, dtype=np.float64)
+    e_vol = np.asarray(e_vol_hist, dtype=np.float64)
+    K = int(restart_every)
+    n_reps = len(e) // K
+    if max_reps > 0:
+        n_reps = min(n_reps, int(max_reps))
+    if n_reps < 4 or K < 2:
+        return {}
+
+    acc: dict = {}
+    for r in range(n_reps):
+        blk = AccumulatorBlock()
+        blk.reset(h0, cfg)
+        base = r * K
+        for j in range(K):
+            i = base + j
+            ev = float(e[i])
+            blk.update(ev, ev, float(e_vol[i]), j + 1)
+            feats = blk.features()
+            for name in (wanted or feats):
+                val = feats.get(name)
+                if val is None:
+                    continue
+                mat = acc.get(name)
+                if mat is None:
+                    mat = acc[name] = np.full((n_reps, K), np.nan, dtype=np.float64)
+                mat[r, j] = val
+    return acc

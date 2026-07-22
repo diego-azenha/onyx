@@ -6,7 +6,7 @@ estruturalmente impossível reestimar o H0 no meio do online (bloqueio B2 do pla
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -30,6 +30,10 @@ class H0Params:
     sigma_e_rob: float
     nu_hat: float
     q: dict
+    e_hist: np.ndarray          # resíduos padronizados NA ORDEM ORIGINAL (as versões ordenadas
+                                # abaixo perdem o tempo, e há análises — precursores da cauda,
+                                # replays de bloco — que precisam da sequência). Mesmo tamanho das
+                                # duas que já existiam, então não é uma classe nova de custo.
     sorted_e_hist: np.ndarray
     sorted_abs_e_hist: np.ndarray
     sigma_u: float
@@ -175,11 +179,8 @@ def fit_h0(hist: np.ndarray, cfg: "Config") -> H0Params:
     # vez por série. Nada disso adiciona custo ao laço online. ---
     fingerprint = compute_fingerprint(e_hist, hist, q, cfg)
     rff_href, rff_href_joint = mmd_history_reference(e_hist, cfg)
-    null_stats = compute_null_stats(
-        e_hist, sorted_e_hist, sorted_abs_e_hist, rff_href, rff_href_joint, cfg
-    )
 
-    return H0Params(
+    params = H0Params(
         phi=phi,
         c=c,
         mu0=mu0,
@@ -188,6 +189,7 @@ def fit_h0(hist: np.ndarray, cfg: "Config") -> H0Params:
         sigma_e_rob=sigma_e_rob,
         nu_hat=nu_hat,
         q=q,
+        e_hist=e_hist,
         sorted_e_hist=sorted_e_hist,
         sorted_abs_e_hist=sorted_abs_e_hist,
         sigma_u=sigma_u,
@@ -202,8 +204,13 @@ def fit_h0(hist: np.ndarray, cfg: "Config") -> H0Params:
         fingerprint=fingerprint,
         rff_href=rff_href,
         rff_href_joint=rff_href_joint,
-        null_stats=null_stats,
+        null_stats={},
     )
+    # F1: a calibração de nulo roda os BLOCOS REAIS sobre o histórico, e `CusumBlock.reset` /
+    # `AccumulatorBlock.reset` exigem um `H0Params` de verdade. Por isso o objeto é montado primeiro
+    # com `null_stats={}` e completado aqui — `replace` devolve uma cópia, então a imutabilidade
+    # (bloqueio B2: não existe `.refit()`) continua valendo.
+    return replace(params, null_stats=compute_null_stats(e_hist, params, cfg))
 
 
 def seed_lag_buffer(params: H0Params) -> RingBuffer:

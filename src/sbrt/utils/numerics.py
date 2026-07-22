@@ -57,3 +57,19 @@ def lgamma_cached(x: float) -> float:
 
 def ewma_update(prev: float, x: float, lam: float) -> float:
     return (1.0 - lam) * prev + lam * x
+
+
+def vol_adjust_step(v: float, e: float, lam: float) -> tuple[float, float]:
+    """Um passo do ajuste de volatilidade (plano §3.4). Devolve `(v_novo, e_vol)`.
+
+    A EWMA é atualizada ANTES de dividir — `e_vol_t` usa o `v_t` que já contém `e_t²`. A ordem
+    importa para a equivalência bit-a-bit e não deve ser "simplificada".
+
+    Existe como primitiva compartilhada porque a mesma recursão roda em DOIS lugares que precisam
+    concordar exatamente: o laço online (`state/scorer.py`) e o replay sobre o histórico que mede o
+    nulo por série (`state/calibration.py:history_evol`, F1). Duas implementações da mesma recursão
+    é precisamente a classe de bug que este módulo existe para evitar — e aqui o custo de um
+    desalinhamento é alto e silencioso: envenenaria o nulo de toda feature `e_vol`-based calibrada,
+    sem erro visível."""
+    v_new = ewma_update(v, e * e, lam)
+    return v_new, e / math.sqrt(max(v_new, 1e-12))

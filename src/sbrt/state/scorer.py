@@ -20,11 +20,12 @@ from sbrt.state.dependence import DependenceBlock
 from sbrt.state.jumps import JumpBlock
 from sbrt.state.lmoments import LMomentBlock
 from sbrt.state.mmd import MMDBlock
+from sbrt.state.multirep import MultiRepBlock
 from sbrt.state.multiscale import MultiScaleBlock
 from sbrt.state.rank_twosample import RankTwoSampleBlock
 from sbrt.state.varloc import VarLocBlock
 from sbrt.state.h0 import H0Params, seed_lag_buffer, whiten_step
-from sbrt.utils.numerics import ewma_update
+from sbrt.utils.numerics import ewma_update, vol_adjust_step
 from sbrt.utils.ring_buffer import RingBuffer
 from sbrt.postprocess.monotonicity import apply as apply_monotonicity
 
@@ -45,8 +46,35 @@ def default_blocks() -> list:
         LMomentBlock(),      # P2 (INVESTIGACAO §4.2): forma de cauda dinâmica (L-momentos)
         VarLocBlock(),       # P3 (INVESTIGACAO §3): variância localizada no changepoint
         JumpBlock(),         # P4 (INVESTIGACAO §4.3): bipower/saltos + leverage (precisão T6/T9)
+        # CONJUNTO EMPACOTADO 2026-07-22 = V4 + multi-representacao, 189 colunas. TEM DE CASAR
+        # COM `resources/feature_schema.json` -- o scorer e o modelo sao um par.
+        #
+        # Medido com K sementes limpas por lado (a semente 42 e excluida: contaminada por selecao,
+        # docs/BACKLOG_TSAUC.md). Empacotados com 3-4 sementes fundidas:
+        #   V4 183           0,6057
+        #   +mrep 189        0,6120  <- ESTE
+        #   V5 178           0,6117  (poda +0,0027 e BOCPD +0,0029, ambos reais)
+        #   V5+mrep 181      0,6091  <- os ganhos NAO SOMAM: juntar piora -0,0024 vs V5, nas 3
+        #                               sementes. Cada componente ajuda sozinho, o conjunto nao.
+        MultiRepBlock(),     # ADOTADO 2026-07-22 (BACKLOG_TSAUC): ponte tipo-integral (Cramér-von
+                             # Mises) sobre `e`, `e²` e o PIT — 7 sementes por lado, Δ +0,0042
+                             # [+0,0022, +0,0063], IC exclui 0 A FAVOR no agregado e no bucket-alvo
+                             # `150<t≤400` declarado a priori. Custo ~+120 µs/passo (gate 1500).
     ]
-    # Este é o conjunto de blocos do V4 -- o melhor modelo medido do projeto (docs/HISTORICO.md §1).
+    # Base: o conjunto do V4 (docs/HISTORICO.md §1), 183 colunas, + o MultiRepBlock = 189.
+    #
+    # `state/spectral.py` (8 colunas) e `state/ordinal.py` (5) foram medidos no MESMO ciclo, pela
+    # mesma build, com braços separados por `--drop-prefix`, e ficaram ABAIXO da barra: +0,0021 e
+    # +0,0015 contra os +0,0036 do mrep (médias de 7 sementes limpas). Continuam escritos e testados,
+    # desligados. A lição: os três passaram no rastreio de redundância com folga parecida, então
+    # "direção nova" não prediz "carrega sinal" -- o que separou o mrep foi ter hipótese sobre EM QUE
+    # REGIME o banco falha (sup-type vs integral-type perto da borda da janela), não ser inédito.
+    #
+    # O MismatchBlock (state/mismatch.py, F2) esteve aqui e SAIU por medição com 4 sementes por lado
+    # (2026-07-22): média 0,6036 contra 0,6081 do V4, Delta -0,0045 com EP de 0,0018 -- as QUATRO
+    # sementes do F2 abaixo da média do V4. A medição de uma semente só dizia -0,0024, indistinguível
+    # do nulo de trocar semente (-0,0037); foi o protocolo de K sementes que tornou o veredito
+    # defensável nos dois sentidos. O bloco e o teste continuam em state/mismatch.py.
     #
     # O BOCPDBlock (state/bocpd.py) esteve aqui no V5, junto com a poda de LMomentBlock e de
     # dependence.windows=[50] (argumento de ROI de latência). O pacote foi medido por R0 e REGREDIU:
@@ -89,8 +117,9 @@ class StreamScorer:
         e, e_raw = whiten_step(x, self.lags, self.h0, self.cfg)
 
         if self.use_vol_adjust:
-            self.v = ewma_update(self.v, e * e, self.lambda_v)
-            e_vol = e / math.sqrt(max(self.v, 1e-12))
+            # primitiva compartilhada com o replay do histórico em calibration.py (F1) — ver a
+            # docstring de utils/numerics.py:vol_adjust_step
+            self.v, e_vol = vol_adjust_step(self.v, e, self.lambda_v)
         else:
             e_vol = e
 

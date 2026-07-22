@@ -134,20 +134,30 @@ class DependenceBlock:
         return out
 
 
-def history_null_series(e_hist, cfg) -> dict:
+def history_null_series(e_hist, cfg, e_vol_hist=None) -> dict:
     """Roda o PRÓPRIO DependenceBlock sobre o histórico (H0 por definição) e devolve a série de cada
-    feature e-based, para a calibração de nulo por série (F1, state/calibration.py). Rodar o bloco
-    real — em vez de uma reimplementação vetorizada — garante por construção que o nulo é medido
-    exatamente com a mesma estatística do online (elimina o risco de desalinhamento que exigiu testes
-    dedicados no MMD/Haar). `e_vol` é aproximado por `e` no histórico (o ajuste de volatilidade
-    converge a ~1 sobre o histórico estacionário); por isso `dep_mass_evol_*` NÃO é calibrado."""
+    feature, para a calibração de nulo por série (F1, state/calibration.py). Rodar o bloco real — em
+    vez de uma reimplementação vetorizada — garante por construção que o nulo é medido exatamente com
+    a mesma estatística do online (elimina o risco de desalinhamento que exigiu testes dedicados no
+    MMD/Haar).
+
+    `e_vol_hist=None` mantém o comportamento histórico (aproximar `e_vol` por `e`), e nesse caso
+    `dep_mass_evol_*` fica de fora por não ser confiável. Com o `e_vol` real de
+    `calibration.history_evol` (F1.0), `dep_mass_evol_*` passa a ser calibrável — e é uma das cinco
+    colunas do braço F1.a.
+
+    As features baseadas em `e` (|e| e e²) são idênticas nos dois modos: o bloco só usa o terceiro
+    argumento para `dep_mass_evol`. Isso é o que permite ligar o `e_vol` real sem mexer no nulo já
+    medido das demais — verificado em tests/unit/test_dependence.py."""
+    use_evol = e_vol_hist is not None
     blk = DependenceBlock()
     blk.reset(None, cfg)
     acc: dict[str, list] = {}
     for i, ev in enumerate(e_hist, start=1):
-        blk.update(float(ev), float(ev), float(ev), i)
+        e = float(ev)
+        blk.update(e, e, float(e_vol_hist[i - 1]) if use_evol else e, i)
         for name, val in blk.features().items():
-            if name.startswith("dep_mass_evol"):
+            if not use_evol and name.startswith("dep_mass_evol"):
                 continue
             acc.setdefault(name, []).append(val)
     return acc

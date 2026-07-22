@@ -102,6 +102,55 @@ def _ljung_box(x: np.ndarray, max_lag: int) -> float:
     return _safe(n * (n + 2) * q / max_lag, 1.0)
 
 
+def compute_precursors(e_hist: np.ndarray, cfg) -> dict:
+    """Precursores de *critical slowing down* na CAUDA do histórico (F5, docs/BACKLOG_TSAUC.md).
+
+    **Ainda não faz parte da impressão digital de produção — de propósito.** `compute_fingerprint`
+    não chama esta função; quem chama é `scripts/ce6_history_classifier.py --with-precursors`, o
+    gate F0.d. A ordem importa: já está medido que os 28 descritores atuais não antecipam quebra
+    precoce (AUC 0,4878, abaixo do acaso). Promover isto a feature de produção antes de o gate mover
+    aquele número seria adicionar largura sem sinal — que sob TS-AUC transversal machuca a calibração
+    relativa das demais séries. Se o gate mover, promover custa uma linha em `compute_fingerprint`.
+
+    A teoria (Scheffer et al.): perto de uma bifurcação o sistema recupera mais devagar de
+    perturbações, e aparecem AC(1) e variância CRESCENTES. O que carrega o sinal não é o nível de
+    AC(1) — isso `acf_*` já mede — é a INCLINAÇÃO dele no fim do histórico. Por isso tudo aqui é
+    regressão de estimativas rolantes contra o índice da janela, medida só na cauda.
+
+    Ressalva registrada em `informacao_nao_capturada.md` §3: precursores só existem em transições
+    tipo-bifurcação. Em quebras abruptas/exógenas são ruído puro, e injetados crus PIORAM as
+    abruptas. Por isso qualquer uso futuro exige condicionamento a um indicador de tipo de dinâmica
+    (`hurst`/`acf_decay`, já na impressão digital)."""
+    fp_cfg = cfg.h0_fingerprint
+    e = np.asarray(e_hist, dtype=np.float64)
+    tail = e[int(len(e) * (1.0 - fp_cfg.precursor_tail_frac)):]
+    w = fp_cfg.precursor_window
+    stride = max(w // 2, 1)
+    starts = list(range(0, len(tail) - w + 1, stride))
+    if len(starts) < 4:
+        return {"precursor_ac1_slope": 0.0, "precursor_var_slope": 0.0,
+                "precursor_skew_slope": 0.0, "precursor_ac1_last_minus_first": 0.0}
+
+    ac1, var, skew = [], [], []
+    for s in starts:
+        blk = tail[s: s + w]
+        ac1.append(_acf(blk, 1))
+        v = float(blk.var(ddof=1))
+        var.append(math.log(max(v, 1e-12)))
+        sd = math.sqrt(max(v, 1e-12))
+        skew.append(float(np.mean(((blk - blk.mean()) / sd) ** 3)))
+
+    # x normalizado em [0,1]: a inclinação vira "variação ao longo da cauda", comparável entre
+    # séries de históricos de tamanhos diferentes (n_h vai de 1.000 a 5.000).
+    x = np.linspace(0.0, 1.0, len(starts))
+    return {
+        "precursor_ac1_slope": _safe(float(np.polyfit(x, np.array(ac1), 1)[0]), 0.0),
+        "precursor_var_slope": _safe(float(np.polyfit(x, np.array(var), 1)[0]), 0.0),
+        "precursor_skew_slope": _safe(float(np.polyfit(x, np.array(skew), 1)[0]), 0.0),
+        "precursor_ac1_last_minus_first": _safe(float(ac1[-1] - ac1[0]), 0.0),
+    }
+
+
 def compute_fingerprint(e_hist: np.ndarray, hist: np.ndarray, q: dict, cfg) -> dict:
     """Descritores escalares do regime H0. Chamado uma vez por série em `fit_h0`; custo O(n_h log n_h)
     dominado pela FFT/ordenação, desprezível frente ao que `fit_h0` já faz."""

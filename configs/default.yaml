@@ -50,14 +50,15 @@ rank_twosample:                       # R4 (docs/PARECER_AUDITORIA_ONYX.md §6-R
   windows: [25, 100]                  # rank-based janela-vs-histórico -- analogo causal de 2025
 
 dependence:                           # P1 (docs/HISTORICO.md §8): dependencia nao-linear
-  windows: [50, 100]                  # rho1 de |e| e e^2. w050 foi podada no V5, que regrediu por
-                                      # R0 e foi revertido (docs/HISTORICO.md §9); voltou aqui.
+  windows: [50, 100]                  # w050 de volta: ela sai no V5 (poda vale +0,0027 medido com
+                                      # 3 sementes limpas), mas o V5 NAO e o conjunto empacotado --
+                                      # V5+mrep mede pior que mrep sozinho. Ver BACKLOG_TSAUC.md.
   mass_window: 100                    # massa multi-lag Sum rho_k^2
   mass_max_lag: 5
 
-lmoments:                             # P2 (docs/HISTORICO.md §8): forma de cauda dinamica. Foi podada
-  windows: [50, 100]                  # no V5 (~65us/passo por 0,51% de SHAP), mas o V5 regrediu por
-                                      # R0 e foi revertido inteiro (§9) -- de volta no pipeline.
+lmoments:                             # P2: forma de cauda dinamica. PODADO de default_blocks em
+  windows: [50, 100]                  # 2026-07-22 (0,51% do xs-SHAP por ~65us/passo). A poda faz
+                                      # parte do pacote medido em +0,0027. Config preservada.
 
 bocpd:                                # ESTACIONADO fora de default_blocks: entrou no V5, que regrediu
   r_max: 256                          # por R0 (§9). Config preservada para reabrir o experimento que
@@ -74,6 +75,65 @@ varloc:                               # P3 (docs/INVESTIGACAO_FALHAS_V3.md): var
 
 jumps:                                # P4 (docs/INVESTIGACAO_FALHAS_V3.md): bipower/saltos + leverage
   windows: [50, 100]                  # RV/BV (razao de salto), semivariancia RS+/RS-, leverage
+
+trajectory:                           # F4+F9 (docs/BACKLOG_TSAUC.md): forma da rampa do estatistico.
+                                      # NAO esta em scorer.py:default_blocks ainda -- braco proprio.
+  ewma_lambda: 0.1                    # janela efetiva ~10 passos para inclinacao/monotonicidade
+  threshold: 2.0                      # os estatisticos rastreados sao z-scores calibrados (F1),
+                                      # entao 2.0 e um limiar livre de escala -- ~2 desvios do nulo
+                                      # da PROPRIA serie, nao um numero absoluto arbitrario.
+  track:                              # feature rastreada -> alias curto (entra no nome da saida).
+                                      # Curto de proposito: cada item multiplica a largura por 5.
+                                      # Escolhidos por xs_shap alto no V2 e por serem acumuladores de
+                                      # evidencia (nao instantaneos): variancia calibrada e o canal
+                                      # dominante (beta=+0,312), cusum_var_up e o CUSUM mais forte,
+                                      # bayes_lo e a evidencia posterior.
+    accum_window_var_ln_w100_cal: var
+    cusum_var_up_r150: cvar
+    bayes_lo_h0100: blo
+
+mismatch:                             # F2 (docs/BACKLOG_TSAUC.md): o filtro congelado ainda vale?
+                                      # NAO esta em scorer.py:default_blocks ainda -- entra como
+                                      # braco proprio, depois que o R0 de F1 fechar.
+  windows: [10, 25, 50]               # portmanteau sobre `e` puro (brancura multi-lag do AR(10)).
+                                      # Janelas curtas de proposito: o alvo e 25<m pos-quebra, nao
+                                      # m minusculo (teto causal em t<=50 e real).
+  max_lag: 5                          # L do Sum rho_k^2
+  arch_windows: [25, 50]              # McLeod-Li sobre e^2 (ARCH multi-lag; dep_sqrho1 so ve lag 1)
+  arch_max_lag: 5
+  cusum_delta: 0.3                    # mesma escala de state.dependence_delta_u, que ja e o CUSUM
+                                      # de escore lag-1; aqui o escore e agregado sobre 1..L
+
+# --- eixos NAO COBERTOS (docs/BACKLOG_TSAUC.md) ---
+# Os tres blocos abaixo NAO estao em scorer.py:default_blocks. Cada um entra como braco proprio de
+# R0, um por vez, com bucket-alvo 151-400 declarado a priori (48,7% do peso da metrica) e depois de
+# passar por `python scripts/xs_redundancy.py --extra-blocks <bloco> --vs-all <prefixo>`.
+# A disciplina vem de tres regressoes medidas (V5 -0,0042; F1 -0,0069; centragem +0,0018 = ruido):
+# largura sem ordenacao nova DILUI o sorteio de feature_fraction=0,8 e machuca.
+
+spectral:                             # forma (nao nivel) do espectro de `e` -- state/spectral.py
+  n_bins: 6                           # K bandas iguais de (0,pi); K bem menor que a janela efetiva
+  decay: 0.88                         # DFT de tempo curto, janela ~8 passos (resolucao)
+  alpha_fast: 0.10                    # media de Welch sobre ~10 periodogramas
+  alpha_slow: 0.03                    # ~33 periodogramas. MEDIDO: sem esta promediacao o
+                                      # periodograma cru tem dp = media (exponencial) e a entropia
+                                      # de H0 sai 0,81 +- 0,10 -- ruido MAIOR que o efeito de um
+                                      # AR(1) com phi=0,6. A diferenca fast-slow e a
+                                      # "reorganizacao" propriamente dita (contraste interno, sem
+                                      # constante estimada por serie -- ver a autopsia do F1)
+  low_bins: 2                         # fracao de potencia no terco inferior do espectro
+
+ordinal:                              # padroes ordinais de Bandt-Pompe -- state/ordinal.py
+  m3_windows: [50, 100]               # 6 simbolos: janela curta ainda estima bem
+  m4_windows: [100]                   # 24 simbolos: precisa de janela longa
+  min_counts_m3: 20                   # emite com janela PARCIAL a partir daqui. O vies de contagem
+  min_counts_m4: 30                   # da entropia depende so de n, e n e igual para todas as
+                                      # series no mesmo t -> neutro por C1. Esperar a janela encher
+                                      # custaria NaN em todo o bucket 51-150 em troca de nada.
+
+multirep:                             # ponte tipo-integral (KPSS/Cramer-von Mises) -- state/multirep.py
+  windows: [50, 100]                  # sobre tres representacoes: `e`, `e^2` e o PIT contra o H0
+  min_n: 20                           # abaixo disso a ponte e ruido de amostra pequena
 
 # --- proposta V2 (docs/PROPOSTA_FEATURES_V2.md) ---
 mmd:                                  # F3: MMD de kernel via Random Fourier Features (NEWMA)
@@ -94,10 +154,47 @@ h0_fingerprint:                       # F2: descritores estendidos de H0, custo 
   acf_max_lag: 10
   hurst_scales: [1, 2, 4, 8, 16]
   volvol_window: 50
+  # F5/F0.d: precursores de critical slowing down na CAUDA do historico. Usados APENAS pelo gate
+  # ce6_history_classifier.py --with-precursors; NAO entram em compute_fingerprint (nao sao feature
+  # de producao) ate o gate mostrar sinal. Ver state/fingerprint.py:compute_precursors.
+  precursor_tail_frac: 0.4            # fracao final do historico onde o precursor e procurado
+  precursor_window: 100               # janela das estimativas rolantes de AC(1)/variancia/assimetria
 
 calibration:                          # F1: nulo por serie medido sobre o proprio historico
   enabled: true
   shrink_pseudo: 10.0                 # encolhe sd empirico -> teorico i.i.d. com peso n_eff/(n_eff+10)
+  # --- F1.a (docs/BACKLOG_TSAUC.md): nulo de estatisticas RECURSIVAS por replicas com reinicio ---
+  transient_restart_every: 100        # K: passos por replica. MEDIDO: o CUSUM leva ~75 passos para
+                                      # atingir a distribuicao estacionaria (t=25 -> 72% da media
+                                      # estacionaria, t=50 -> 90%, t=75 -> 99%), entao K=100 cobre o
+                                      # transiente inteiro. Com n_h mediano de 3000 da ~30 replicas
+                                      # independentes por serie; custo = 1 passada pelo historico.
+  transient_smooth_w: 5               # suavizacao da curva de transiente ao longo de t (a curva
+                                      # verdadeira e suave; suavizar troca vies desprezivel por
+                                      # ~2x menos ruido de estimacao por serie)
+  transient_max_reps: 20              # teto de replicas. O custo e linear em n_reps e o erro cai com
+                                      # sqrt(n_reps) -- e ainda passa por encolhimento e suavizacao
+                                      # (janela 5 => ~100 amostras efetivas por ponto da curva).
+                                      # Sem teto, n_h=5000 pagaria 50 replicas por ganho desprezivel.
+  recursive_features: {}              # estatistica recursiva -> como o nulo dela escala em t.
+                                      # `none` = recursao refletida (nulo estacionario apos o
+                                      # transiente); `cumsum` = acumulador sem reset (mu ~ t, dp ~ raiz(t)).
+                                      #
+                                      # VAZIO POR MEDICAO (2026-07-21, docs/BACKLOG_TSAUC.md).
+                                      # Os bracos F1.a (cusum_dep_*, accum_*_rho1_fz, dep_mass_evol)
+                                      # e F1.b-1 (conformal_logm_*) foram construidos, medidos por R0
+                                      # contra o V4 e REGREDIRAM: Delta geral -0,0069
+                                      # [-0,0125, -0,0018], IC exclui 0 CONTRA, e 50<t<=150 em
+                                      # -0,0136 [-0,0222, -0,0053].
+                                      # Causa provavel, medida antes do R0 por scripts/xs_redundancy.py:
+                                      # as colunas calibradas reproduzem a ordenacao transversal das
+                                      # cruas (corr 0,92-0,98), entao nao acrescentam ordenacao -- so
+                                      # largura, e largura sem sinal dilui o sorteio de
+                                      # feature_fraction=0,8 (docs/NOTAS_AGENTES.md secao 7).
+                                      # A maquinaria (replicas com reinicio, tabela de transiente,
+                                      # kind=cumsum) continua testada e pronta; reabrir um braco e
+                                      # acrescentar linhas aqui. Antes disso, rodar o rastreio:
+                                      # so `conformal_logm_abs_reset` (corr 0,695) reordena de fato.
 
 features:
   warmup_min_n: 5                     # below this, window/EWMA-derived stats emit NaN
@@ -128,6 +225,12 @@ lightgbm:                              # plano §8.3
                                         # Usar o fold inteiro reduz essa fonte de ruido; reativar
                                         # (>0) só se o custo por rodada em datasets maiores exigir e
                                         # com subamostra bem maior (>= algumas centenas de milhares).
+  bag_seeds: [777, 101, 202, 303]      # bagging de sementes FUNDIDAS (src/sbrt/model/fuse.py).
+                                        # +0,0040 medido; K=4 captura 83% do ganho disponivel
+                                        # (satura em +0,0048 com K=7). Custa 4x o tempo de TREINO
+                                        # na nuvem; o dataset e construido uma vez so.
+                                        # A semente 42 fica de fora: contaminada por selecao, ela e
+                                        # a PIOR para este conjunto de features (docs/BACKLOG_TSAUC.md).
   early_stopping_metric: logloss       # ver comentário em src/sbrt/config.py:LightGBMConfig --
                                         # "ts_auc_by_t" sozinho (mesmo sem subamostra) regrediu a
                                         # TS-AUC OOF real (Delta -0.0099, IC exclui 0); "logloss"

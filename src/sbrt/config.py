@@ -142,20 +142,103 @@ class MultiScaleConfig:
 
 @dataclass(frozen=True)
 class H0FingerprintConfig:
-    """F2: descritores estendidos do regime H0 (state/fingerprint.py)."""
+    """F2: descritores estendidos do regime H0 (state/fingerprint.py).
+
+    Os campos `precursor_*` servem só a `compute_precursors`, que é o gate F0.d e ainda NÃO alimenta
+    features de produção — ver a docstring daquela função."""
     hill_frac: float
     acf_max_lag: int
     hurst_scales: tuple
     volvol_window: int
+    precursor_tail_frac: float
+    precursor_window: int
+
+
+@dataclass(frozen=True)
+class TrajectoryConfig:
+    """F4+F9 (docs/BACKLOG_TSAUC.md): trajetória do estatístico (state/trajectory.py).
+
+    `track` mapeia feature rastreada -> alias curto usado no nome da saída. Guardado como tupla
+    ordenada de pares para que a iteração seja determinística no caminho de inferência
+    (docs/NOTAS_AGENTES.md §1)."""
+    ewma_lambda: float
+    threshold: float
+    track: tuple
+
+    def __post_init__(self):
+        raw = self.track
+        items = sorted(raw.items()) if isinstance(raw, dict) else sorted(tuple(p) for p in raw)
+        aliases = [a for _, a in items]
+        if len(set(aliases)) != len(aliases):
+            raise ValueError(f"trajectory.track com alias repetido: {aliases}")
+        object.__setattr__(self, "track", tuple(items))
+
+
+@dataclass(frozen=True)
+class MismatchConfig:
+    """F2 (docs/BACKLOG_TSAUC.md): brancura multi-lag do filtro congelado (state/mismatch.py)."""
+    windows: tuple
+    max_lag: int
+    arch_windows: tuple
+    arch_max_lag: int
+    cusum_delta: float
+
+
+@dataclass(frozen=True)
+class SpectralConfig:
+    """Eixo novo (docs/BACKLOG_TSAUC.md): forma do espectro de `e` (state/spectral.py)."""
+    n_bins: int
+    decay: float        # fator de esquecimento da DFT de tempo curto (janela ~1/(1-decay))
+    alpha_fast: float   # taxa da EWMA de potência (média de Welch) — convenção do projeto:
+    alpha_slow: float   # alpha é a TAXA, janela efetiva ~1/alpha (igual a multiscale.ewma_lambda)
+    low_bins: int
+
+
+@dataclass(frozen=True)
+class OrdinalConfig:
+    """Eixo novo (docs/BACKLOG_TSAUC.md): padrões ordinais de Bandt-Pompe (state/ordinal.py)."""
+    m3_windows: tuple
+    m4_windows: tuple
+    min_counts_m3: int
+    min_counts_m4: int
+
+
+@dataclass(frozen=True)
+class MultiRepConfig:
+    """Eixo novo (docs/BACKLOG_TSAUC.md): ponte tipo-integral sobre três representações
+    (state/multirep.py)."""
+    windows: tuple
+    min_n: int
 
 
 @dataclass(frozen=True)
 class CalibrationConfig:
     """F1: calibração de nulo por série (state/calibration.py). `shrink_pseudo` é a pseudo-contagem
     de encolhimento do desvio empírico para o teórico i.i.d. — necessária porque uma janela w sobre
-    um histórico n_h só tem ~n_h/w janelas independentes."""
+    um histórico n_h só tem ~n_h/w janelas independentes.
+
+    `recursive_features` (F1.a/F1.b) mapeia estatística RECURSIVA -> como o nulo dela escala em t.
+    Essas têm o nulo medido por réplicas com reinício sobre o histórico, não por passada contínua.
+    Manter isto em YAML é o que permite abrir a cobertura de F1.b como diff de configuração, um
+    sub-braço por vez — e é o que impede o erro do V5 (empacotar mudanças e não conseguir atribuir o
+    efeito a nenhuma delas).
+
+    Leis aceitas: `none` (recursão refletida -> nulo estacionário: CUSUMs, martingale com reset) e
+    `cumsum` (acumulador sem reset -> mu ∝ t, dp ∝ sqrt(t): os log-martingales conformais)."""
     enabled: bool
     shrink_pseudo: float
+    transient_restart_every: int
+    transient_smooth_w: int
+    transient_max_reps: int
+    recursive_features: tuple  # ((nome, kind), ...) ordenado — tupla, não dict, para iteração determinística
+
+    def __post_init__(self):
+        raw = self.recursive_features
+        items = sorted(raw.items()) if isinstance(raw, dict) else sorted(tuple(p) for p in raw)
+        bad = [n for n, k in items if k not in ("none", "cumsum")]
+        if bad:
+            raise ValueError(f"calibration.recursive_features com lei de escala desconhecida: {bad}")
+        object.__setattr__(self, "recursive_features", tuple(items))
 
 
 @dataclass(frozen=True)
@@ -181,6 +264,14 @@ class LightGBMConfig:
     train_num_threads: int
     predict_num_threads: int
     n_folds: int
+    bag_seeds: tuple = ()  # sementes a treinar e FUNDIR em `adapter/platform.py:train()`. Vazio =
+    # uma so. MEDIDO 2026-07-22: bagging de 4 sementes vale +0,0040 de TS-AUC e satura em ~+0,0048
+    # (K=7); a fusao dos boosters (model/fuse.py) mantem o custo de inferencia praticamente igual.
+    # Cada semente multiplica o TEMPO DE TREINO na nuvem -- o dataset e construido uma vez so.
+    boost_seed: int | None = None  # semente do sorteio interno do LightGBM (bagging/feature_fraction).
+    # None = usa `seed` global. Só existe para calibrar o NULO da regra de decisão de R0: trocá-la
+    # perturba o booster sem mexer nos folds, o que dá a variância de retreino que o bootstrap
+    # pareado por série não enxerga. Ver src/sbrt/model/train.py.
     feval_max_valid_rows: int | None = None  # R2 (parecer §6-R2): subamostra determinística do fold
     # de validação usada pelo feval de AUC-por-passo a cada rodada de boosting; None = fold inteiro.
     early_stopping_metric: str = "logloss"  # "logloss" ou "ts_auc_by_t" -- qual das duas métricas do
@@ -251,6 +342,11 @@ class Config:
     mmd: MMDConfig
     multiscale: MultiScaleConfig
     h0_fingerprint: H0FingerprintConfig
+    trajectory: TrajectoryConfig
+    mismatch: MismatchConfig
+    spectral: SpectralConfig
+    ordinal: OrdinalConfig
+    multirep: MultiRepConfig
     calibration: CalibrationConfig
     features: FeaturesConfig
     lightgbm: LightGBMConfig
@@ -286,6 +382,11 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         mmd=MMDConfig(**raw["mmd"]),
         multiscale=MultiScaleConfig(**raw["multiscale"]),
         h0_fingerprint=H0FingerprintConfig(**raw["h0_fingerprint"]),
+        trajectory=TrajectoryConfig(**raw["trajectory"]),
+        mismatch=MismatchConfig(**raw["mismatch"]),
+        spectral=SpectralConfig(**raw["spectral"]),
+        ordinal=OrdinalConfig(**raw["ordinal"]),
+        multirep=MultiRepConfig(**raw["multirep"]),
         calibration=CalibrationConfig(**raw["calibration"]),
         features=FeaturesConfig(**raw["features"]),
         lightgbm=LightGBMConfig(**raw["lightgbm"]),

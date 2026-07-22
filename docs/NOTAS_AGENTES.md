@@ -2,8 +2,9 @@
 
 **Público:** agentes de IA (ou pessoas) que vão modificar este repositório. Nada aqui é necessário
 para *entender* o modelo — isso está em [`MODELO.md`](MODELO.md) — nem para saber o que já foi
-tentado — isso está em [`HISTORICO.md`](HISTORICO.md). Aqui ficam invariantes, contratos, comandos,
-inventário de artefatos, pegadinhas medidas e pendências abertas.
+tentado — isso está em [`HISTORICO.md`](HISTORICO.md) — nem para saber o que vem a seguir — isso está
+em [`BACKLOG_TSAUC.md`](BACKLOG_TSAUC.md). Aqui ficam invariantes, contratos, comandos, inventário de
+artefatos, pegadinhas medidas e pendências abertas.
 
 **Ordem de leitura recomendada ao entrar no projeto:** §1 (invariantes) → §2 (contratos) → o arquivo
 que você vai tocar → a seção `§N` de `MODELO.md` referenciada no docstring dele. Não é preciso ler
@@ -67,6 +68,19 @@ class StateBlock(Protocol):
 `StreamScorer` não conhece CUSUM, Bayes ou conformal — ele possui uma `list[StateBlock]` e faz
 `for b in blocks: b.update(...)`. **Adicionar uma família nova = um arquivo novo + uma linha em
 `scorer.py:default_blocks`**, nunca uma mudança espalhada.
+
+**Segundo contrato: blocos de meta-estatística** (F4, `state/trajectory.py`). Uma família que mede a
+trajetória *dos estatísticos já calculados* não cabe em `update(e, e_raw, e_vol, t)` — ela precisa do
+dict de features, não da inovação. O contrato é:
+
+```python
+def update_from_feats(self, feats: dict[str, float], t: int) -> None: ...
+```
+
+Chamado por `StreamScorer.update_features` **depois** de `apply_calibration`, para que a trajetória
+seja medida sobre estatísticos já calibrados contra o nulo da própria série (a inclinação de um
+z-score é comparável entre séries; a de um valor cru não é). Features vindas daqui **não** recebem
+`_cal` — já nascem em unidades calibradas.
 
 Convenção de nomes: `<bloco>_<estatistica>_<parametro>` (`cusum_mean_pos_d050`, `ewma_mean_z_l010`,
 `bayes_lo_h0100`). Sufixo `_cal` = versão calibrada contra o nulo da própria série (F1). Ordem
@@ -198,6 +212,94 @@ Ordem que evita gastar horas em nada:
 OOF de 10.000; muito menor ainda na **diferença pareada**. Um Δ de 0,004 é irresolvível no held-out
 de 100 séries e resolvível no OOF pareado — não confunda os dois instrumentos.
 
+**Onde a métrica realmente paga** (medido 2026-07-21, `docs/BACKLOG_TSAUC.md`):
+
+| bucket | peso | TS-AUC |
+|---|---|---|
+| 1–50 | **8,1%** | 0,5357 |
+| 51–150 | 26,6% | 0,5799 |
+| **151–400** | **48,7%** | 0,6242 |
+| 401+ | 16,5% | 0,6529 |
+
+`t≤50` é o bucket mais fraco e o de menor alavancagem: +0,05 ali rende +0,004 no agregado, abaixo de
+2 desvios do bootstrap pareado (~0,006). **Declarar `t≤50` como bucket-alvo torna o sucesso
+indetectável.** Salvo motivo específico, declarar `151–400` (49% do peso) ou `51–400` (75%).
+
+### 5.1 Rastreios baratos — rodar ANTES de gastar um ciclo de build+treino (~50 min)
+
+Três erros custaram fronts inteiras neste projeto; cada um tem um teste de minutos que o pega:
+
+1. **Redundância transversal** (`scripts/xs_redundancy.py`). A TS-AUC só vê ordenação dentro do passo
+   (C1): coluna nova com correlação ~1 contra uma existente *dentro do passo* não pode mover nada.
+   Previu corretamente o Δ ~0 do braço F1.
+2. **Teto de oráculo tem de passar por teste honesto.** "Oráculo" = qualquer estimativa que use o
+   rótulo, inclusive indiretamente ("selecionar as linhas pré-quebra"). Padrão: estimar num
+   subconjunto de linhas, avaliar em **outro**. A frente de centragem por série mostrou +0,267 no
+   oráculo e **−0,0014** no teste honesto — o teto era contabilidade, não sinal.
+3. **Contraste pré/pós dentro de uma série tem de controlar `t`.** A quebra divide a série no tempo
+   (em `t≤50`: `t` médio 12,4 antes, 35,3 depois) e o score cresce com `t` pela taxa-base. Sem
+   controlar, mede-se a tendência: um gap "real" de 0,0462 virou **0,0010** ao ser medido contra a
+   seção transversal do mesmo passo.
+
+**E não somar coluna que duplique uma existente.** Duas ampliações independentes regrediram com a
+mesma assinatura (V5 −0,0042; F1 −0,0069, ambas piores em `50<t≤150`): largura sem ordenação nova
+dilui o sorteio de `feature_fraction=0,8`. Se a versão nova é melhor, ela **substitui**.
+
+**Como rastrear um bloco que ainda não está ligado.** `xs_redundancy.py --extra-blocks <nome>`
+instancia blocos fora de `default_blocks()` só para o rastreio — a ordem correta é rastrear, medir,
+ligar por último. Nomes disponíveis no dicionário `EXTRA_BLOCKS` do próprio script.
+
+4. **Feature que é razão de estimativas ruidosas não melhora com t.** O `SpectralBlock` na primeira
+   versão normalizava o periodograma cru `|z_k|²`, que é exponencial (desvio = média) *em qualquer
+   comprimento de série*: a entropia de H0 saía 0,81 ± 0,10 entre séries i.i.d., ruído maior que o
+   efeito de um AR(1) com φ=0,6 — e o teste de sinal reprovou. Só promediação explícita (média de
+   Welch) resolve; esperar mais dados não. Vale para qualquer feature do tipo `a/(a+b)` com `a`, `b`
+   estimados: verificar a **dispersão de H0 entre séries**, não só o valor médio.
+
+**Dois gates não testam o caminho implantado — descoberto em 2026-07-22, ambos abertos.**
+1. `scripts/benchmark_latency.py` instancia `StreamScorer(h0, default_blocks(), None, cfg)` — com
+   `ensemble=None`, ou seja, cai no `fallback_score` e **nunca mede a predição**. Reporta 1046 µs
+   quando o custo real com modelo é ~1405 µs (a predição de 5 folds custa 358 µs). ~30% otimista.
+2. `scripts/run_robustness_suite.py` tem `--model default=None`, então `make robustness` roda em
+   fallback. Os limiares por cenário (ex.: `t1.control_median_max: 0.25`) foram calibrados nessa
+   escala e **não se aplicam a um modelo treinado**: `predict_one` devolve `sigmoid(raw)` sem o
+   offset de taxa-base — "resíduo puro, não probabilidade calibrada" (docstring de `predict_one`).
+   Medido: o próprio artefato V4 de produção dá controle 0,637 contra limiar 0,25. Rodar a suíte com
+   `--model` produz FAIL em tudo e **não é sinal de regressão**.
+
+Consequência prática: nenhum dos dois é um gate do artefato. O que de fato exercita o caminho real é
+`scripts/submission_smoke_test.py`. Corrigir os dois é trabalho pendente; até lá, não interpretar
+`make benchmark`/`make robustness` como validação do modelo empacotado.
+
+**Um parquet não carrega sua proveniência — confira as COLUNAS antes de usá-lo como baseline.**
+`data/processed/train_rows.parquet` é o dataset do **V5** (178 features, com BOCPD, sem L-momentos),
+não o do V4: a reversão do V5 restaurou o modelo e o `resources/`, não o dataset. Assumir pelo nome
+custou duas horas e uma conclusão errada sobre ruído de semente (BACKLOG_TSAUC.md, ERRATA de
+2026-07-22). Uma linha — comparar o conjunto de colunas com o que o modelo alega ter — teria pego.
+
+**MEDIDO: a régua tem dp de 0,0041 que o bootstrap pareado não vê.** Quatro V4 legítimos (mesmas 183
+features, mesmos dados, mesmos folds, só `boost_seed`) dão 0,6100 · 0,6006 · 0,6020 · 0,6030 — média
+**0,6039**, não os 0,6100 do artefato histórico, que é o maior dos quatro. O bootstrap reamostra
+séries e trata as predições como fixas; é cego à variância do booster. EP da diferença entre dois
+modelos de UMA semente = 0,0058, o que torna **inconclusivas** as três rejeições do projeto
+(F1 −0,0069 = 1,2 EP; V5 −0,0042 = 0,7 EP; F2 −0,0024 = 0,4 EP).
+**Nenhum braço se decide contra um sorteio único**: K sementes por lado (`train.py --boost-seed`,
+que muda o sorteio SEM tocar nos folds), comparar as OOF médias (`scripts/avg_oof.py`), mesmo K dos
+dois lados, e `scripts/seed_spread.py` para ver as duas distribuições. Com K=4 a barra de vitória a
+2 EP é Δ ≥ 0,0058. Causa mecânica provável: o nº de árvores por fold varia 51→103 entre sementes
+(early stopping sobre logloss). Ver docs/BACKLOG_TSAUC.md, "O nulo da regra de decisão".
+
+**OOF e placar não estão na mesma escala — primeiro ponto de calibração (2026-07-22).** A submissão
+`5e42ff5` (V4, 183 features, semente única) marcou **0,6201 no leaderboard** contra **0,6100 de
+TS-AUC OOF** local: o placar é +0,0101 MAIOR. Provável causa: são bases diferentes e o modelo
+submetido treina em 100% dos dados, enquanto cada modelo do OOF vê 80% (GroupKFold). Consequências:
+(a) não comparar NÍVEIS entre OOF e placar; (b) o mapeamento de DELTAS entre os dois é desconhecido —
+com um ponto só não dá para estimá-lo. Registrar o par (OOF, placar) a cada submissão: dois pontos já
+permitem uma primeira leitura de se o OOF sub ou superestima melhorias.
+
+**A TS-AUC é transversal — subamostrar séries muda a métrica.** O mesmo `oof_v4` dá 0,6100 nas 10.000
+séries e 0,8098 num subconjunto de 500. Não existe piloto barato por amostragem de séries.
+
 ---
 
 ## 6. Pendências e discrepâncias abertas
@@ -242,8 +344,9 @@ de 100 séries e resolvível no OOF pareado — não confunda os dois instrument
 
 | Operação | Custo |
 |---|---|
-| `fit_h0` | 32–68 ms/série (uma vez) |
-| Inferência completa | 973,8 µs/passo (V4, o empacotado); gate 1500 |
+| `fit_h0` | **~490 ms/série** em `n_h`=3000 (~180 ms em 1.000, ~780 ms em 5.000). O número antigo desta linha (32–68 ms) é anterior às famílias F3/F4/P1–P4, cujos `history_null_series` dominam o custo — remedido em 2026-07-21. `fit_h0` é hoje ~50% do custo por série, não uma nota de rodapé: uma série típica tem ~500 passos online × ~1 ms |
+| `fit_h0` + calibração recursiva (`calibration.recursive_features` não-vazio) | +~155 ms/série, aproximadamente constante em `n_h` (teto de réplicas, `calibration.transient_max_reps`) |
+| Inferência completa | 973,8 µs/passo (V4, o empacotado) na medição original; **1062 µs medidos em 2026-07-21 com o conjunto de features IDÊNTICO ao V4** — a diferença é da máquina/sessão, não do código. Gate 1500, folga confortável. Comparar µs/passo entre sessões diferentes não é confiável; para julgar o custo de uma mudança, medir A/B na mesma sessão |
 | Blocos caros | L-momentos ~65 µs · MMD ~9 µs · Haar ~4 µs · BOCPD ~30 µs (**fora do pipeline**) |
 | Build do dataset | ~9 min (paralelo, `n_jobs`), 2.541.134 linhas |
 | Treino (5 folds) | ~10–15 min |

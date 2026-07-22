@@ -147,3 +147,56 @@ class CusumBlock:
         out["cusum_age_sign_neg"] = float(self.ages["sign_neg"])
         out["cusum_age_exceed_q95"] = float(self.ages["exceed_q95"])
         return out
+
+
+def history_null_series(
+    e_hist, e_vol_hist, h0: "H0Params", cfg: "Config", restart_every: int,
+    max_reps: int = 0, wanted: frozenset = frozenset(),
+) -> dict:
+    """Réplicas com reinício do PRÓPRIO CusumBlock sobre o histórico (H0 por definição), para a
+    calibração de nulo por série (F1.a, state/calibration.py).
+
+    Devolve `{nome: matriz (n_reps, restart_every)}` — linha = uma execução partindo do zero sobre um
+    trecho virgem do histórico, coluna j = valor no passo j+1.
+
+    **Por que reiniciar em vez de uma passada contínua** (como fazem `dependence`/`lmoments`): o CUSUM
+    é uma recursão que parte de 0 e leva ~75 passos para atingir a distribuição estacionária (medido).
+    Uma passada contínua mede só o regime estacionário e não diria nada sobre o nulo em t pequeno —
+    justamente onde o modelo é mais fraco. Cada réplica reproduz o que o online realmente faz, já que
+    `StreamScorer.__init__` reseta todo bloco no início do segmento online.
+
+    `max_reps` limita o número de réplicas: o erro do nulo cai com sqrt(n_reps) e é depois encolhido
+    e suavizado, então passar de ~20 réplicas compra pouco e o custo é linear. Sem o teto, um
+    histórico de 5.000 pontos pagaria 50 réplicas para um ganho de precisão desprezível.
+    `wanted` restringe as colunas materializadas — o bloco tem de rodar inteiro (a recursão é
+    conjunta), mas não há motivo para alocar matriz para 21 features quando a whitelist pede 2.
+
+    Custo: n_reps * restart_every updates, limitado por `max_reps` e por n_h."""
+    e = np.asarray(e_hist, dtype=np.float64)
+    e_vol = np.asarray(e_vol_hist, dtype=np.float64)
+    K = int(restart_every)
+    n_reps = len(e) // K
+    if max_reps > 0:
+        n_reps = min(n_reps, int(max_reps))
+    if n_reps < 4 or K < 2:
+        return {}
+
+    acc: dict = {}
+    for r in range(n_reps):
+        blk = CusumBlock()
+        blk.reset(h0, cfg)
+        base = r * K
+        for j in range(K):
+            i = base + j
+            ev = float(e[i])
+            blk.update(ev, ev, float(e_vol[i]), j + 1)
+            feats = blk.features()
+            for name in (wanted or feats):
+                val = feats.get(name)
+                if val is None:
+                    continue
+                mat = acc.get(name)
+                if mat is None:
+                    mat = acc[name] = np.full((n_reps, K), np.nan, dtype=np.float64)
+                mat[r, j] = val
+    return acc

@@ -29,9 +29,13 @@ além de uma subtração e uma divisão.
 
 ## Decisões de implementação (e por quê)
 
-- **Só estatísticas baseadas em `e`** (variância/cauda/rank). As de média usam `e_vol`, cuja
-  reprodução exigiria replicar a EWMA de volatilidade sobre o histórico; e o censo A1 mostra que o
-  canal de média é quase morto (6,8% das séries com |Δmean_e|>0,3) — não vale a complexidade.
+- **Estatísticas baseadas em `e_vol` exigem `history_evol`.** Até o V4 a calibração cobria só o que
+  é baseado em `e` (variância/cauda/rank), porque reproduzir `e_vol` pedia replicar a EWMA de
+  volatilidade sobre o histórico. Para o canal de **média** esse corte segue valendo por mérito: o
+  censo A1 mostra que ele é quase morto (6,8% das séries com |Δmean_e|>0,3). Mas ele também excluía,
+  sem querer, o canal de **dependência** (`cusum_dep_*`, `accum_*_rho1_fz`, `dep_mass_evol_*`) — que
+  não é morto por natureza, é morto por miscalibração (0,492, abaixo do acaso). `history_evol`
+  remove o bloqueio; o que entra ou não vira decisão medida, não consequência acidental.
 - **`_cal` só quando a janela está cheia** (`t >= min_t`). Para t < w o estatístico online usa
   n_eff = t, cuja distribuição nula é outra (σ de `ln E[e²]` escala com √(2/n_eff)); calibrar com o
   nulo de janela cheia daria um número errado. NaN é tratado nativamente pelo LightGBM e é a resposta
@@ -55,12 +59,16 @@ from typing import NamedTuple
 
 import numpy as np
 
+from sbrt.state import accumulators as accum_mod
+from sbrt.state import conformal as conf_mod
+from sbrt.state import cusum as cusum_mod
 from sbrt.state import lmoments as lmom_mod
 from sbrt.state import dependence as dep_mod
 from sbrt.state import jumps as jump_mod
 from sbrt.state import mmd as mmd_mod
 from sbrt.state import multiscale as ms_mod
 from sbrt.state import varloc as varloc_mod
+from sbrt.utils.numerics import vol_adjust_step
 
 # P(|Z| > 2) para Z ~ N(0,1) — taxa nominal de excedência usada por `accum_window_exceed2_frac_*`.
 _P0_EXCEED2 = 2.0 * (1.0 - 0.5 * (1.0 + math.erf(2.0 / math.sqrt(2.0))))
@@ -81,6 +89,14 @@ class NullSpec(NamedTuple):
     - `"rho"`    : autocorrelação -> mu ~ const, dp_teo(n) ∝ 1/sqrt(n) (P1, dependência);
     - `"none"`   : sem lei de escala conhecida (MMD, Haar, massa multi-lag) -> só vale na janela cheia.
 
+    `table` (F1.a) resolve o caso que nenhum `kind` acima cobre: estatísticas **recursivas** que
+    partem de um estado inicial fixo (CUSUMs partem de 0; a autocorrelação global parte de uma janela
+    expansiva). O nulo delas não é estacionário em t — é uma curva de transiente. `table` é
+    `(mu_por_t, sd_por_t)` medida por réplicas com reinício sobre o histórico, usada para
+    `t <= len(table)` e substituída por `(mu, sd)` depois. Sem ela a única saída honesta seria
+    `min_t` = fim do transiente (~75 passos, medido), deixando a feature 100% NaN justo no bucket
+    `t<=50` — a diluição de sorteio que docs/NOTAS_AGENTES.md §7 registra como pegadinha cara.
+
     A ideia do transporte: o que a série tem de idiossincrático é o *fator de inflação* em relação ao
     nulo i.i.d. (k = dp_medido / dp_teórico), não o nível absoluto. Esse fator é aproximadamente
     constante em n para uma série estacionária, então podemos aplicá-lo ao dp teórico de qualquer n.
@@ -93,6 +109,34 @@ class NullSpec(NamedTuple):
     kind: str = "none"
     window: int = 0
     aux: float = 0.0  # p0, para kind="frac"
+    table: tuple = ()  # (mu_por_t, sd_por_t) do transiente; vazio = sem transiente medido
+
+
+def history_evol(e_hist: np.ndarray, rho1_abs_e: float, cfg) -> np.ndarray:
+    """Reproduz a série `e_vol` do laço online sobre o histórico (F1.0, docs/BACKLOG_TSAUC.md).
+
+    Sem isto, a calibração de nulo só alcança estatísticas baseadas em `e` — o que deixou de fora
+    justamente as features de dependência (`cusum_dep_*`, `accum_*_rho1_fz`, `dep_mass_evol_*`), que
+    são `e_vol`-based e estão medidas como mortas (eixo de dependência em 0,492, abaixo do acaso).
+
+    Recebe `rho1_abs_e` solto em vez de `H0Params` por dois motivos: `h0.py` importa este módulo (o
+    inverso seria circular), e `compute_null_stats` roda DENTRO de `fit_h0`, antes de o `H0Params`
+    existir.
+
+    O laço é sequencial de propósito. Uma EWMA vetorizada em numpy não é bit-a-bit igual à recursão
+    em float64, e a igualdade exata com o online é o requisito inteiro desta função. Custo: uma
+    passada Python sobre o histórico, uma vez por série, dentro de um `fit_h0` que já custa 32–68 ms.
+    """
+    e = np.asarray(e_hist, dtype=np.float64)
+    if rho1_abs_e <= cfg.state.vol_adjust["threshold_rho1_abs"]:
+        return e.copy()  # ajuste desligado nesta série: e_vol É e (mesmo galho de scorer.py)
+
+    lam = cfg.state.vol_adjust["lambda_v"]
+    v = 1.0  # mesma semente do StreamScorer; e_hist já é padronizado por sigma_e, então v0=1 é a escala natural
+    out = np.empty(len(e), dtype=np.float64)
+    for i in range(len(e)):
+        v, out[i] = vol_adjust_step(v, float(e[i]), lam)
+    return out
 
 
 def _rolling_mean(x: np.ndarray, w: int) -> np.ndarray:
@@ -147,15 +191,87 @@ def _add(
     out[name] = NullSpec(mu, max(sd, 1e-6), effective_min_t, kind, int(window), float(aux))
 
 
-def compute_null_stats(
-    e_hist: np.ndarray,
-    sorted_e_hist: np.ndarray,
-    sorted_abs_e_hist: np.ndarray,
-    rff_href: np.ndarray,
-    rff_href_joint: np.ndarray,
-    cfg,
-) -> dict:
-    """{nome_da_feature: (mu_nulo, sd_nulo, min_t)}. Chamado uma vez por série em `fit_h0`."""
+def _smooth(a: np.ndarray, w: int) -> np.ndarray:
+    """Média móvel centrada sobre o eixo do transiente. A curva verdadeira é suave em t por
+    construção, então suavizar troca viés desprezível por menos ruído de estimação — e o ruído aqui
+    entra como ruído POR SÉRIE dentro do passo, exatamente o que degrada o ranking transversal."""
+    if w <= 1 or len(a) < w:
+        return a
+    pad = w // 2
+    padded = np.concatenate([np.full(pad, a[0]), a, np.full(w - 1 - pad, a[-1])])
+    return np.convolve(padded, np.ones(w) / w, mode="valid")
+
+
+def _add_from_replicates(
+    out: dict, name: str, mat: np.ndarray, pseudo: float, smooth_w: int, kind: str = "none"
+) -> None:
+    """Registra o nulo de uma estatística RECURSIVA a partir de réplicas com reinício.
+
+    `mat` tem forma (n_reps, K): a linha r é uma execução do bloco começando do zero sobre um trecho
+    virgem do histórico, e a coluna j é o valor no passo online-equivalente j+1. Isso reproduz
+    exatamente o que o online faz (todo bloco é resetado em `StreamScorer.__init__`), então a coluna j
+    É a distribuição nula da feature no passo j+1.
+
+    O transiente vira `NullSpec.table` (t <= K). Para t > K vale `kind`: `none` extrapola o nulo da
+    última coluna como estacionário; `cumsum` guarda a deriva por passo e a escala por sqrt(passo),
+    porque um acumulador sem reset nunca estaciona.
+
+    O dp de cada coluna é encolhido para a referência com peso n_reps/(n_reps+pseudo) — mesma mecânica
+    de `_add`, e o viés é para o lado seguro (nulo mais largo => calibrada menos agressiva)."""
+    mat = np.asarray(mat, dtype=np.float64)
+    if mat.ndim != 2 or mat.shape[0] < 4 or mat.shape[1] < 2:
+        return
+    # média/dp por coluna ignorando NaN, sem `nanmean`/`nanstd`: colunas inteiramente NaN (a feature
+    # ainda em warm-up) fariam aquelas funções emitir RuntimeWarning, e `np.where` não evita isso
+    # porque avalia os dois ramos.
+    finite = np.isfinite(mat)
+    valid = finite.sum(axis=0)
+    ok = valid >= 2
+    safe = np.where(finite, mat, 0.0)
+    mu_j = np.where(ok, safe.sum(axis=0) / np.maximum(valid, 1), np.nan)
+    dev = np.where(finite, mat - mu_j, 0.0)
+    sd_j = np.where(ok, np.sqrt((dev ** 2).sum(axis=0) / np.maximum(valid - 1, 1)), np.nan)
+    if not np.isfinite(mu_j[-1]) or not np.isfinite(sd_j[-1]):
+        return
+
+    # colunas ainda em warm-up (feature emite NaN) herdam o primeiro valor válido — apply_calibration
+    # já devolve NaN nesses passos porque o CRU é NaN, então o valor aqui nunca chega a ser usado.
+    first = int(np.argmax(np.isfinite(mu_j)))
+    mu_j = np.where(np.isfinite(mu_j), mu_j, mu_j[first])
+    sd_j = np.where(np.isfinite(sd_j), sd_j, sd_j[first])
+
+    K = mat.shape[1]
+    if kind == "cumsum":
+        # o nulo não estaciona: extrai a deriva por passo e a escala por sqrt(passo) do fim da
+        # janela de réplicas, que `_null_at` extrapola para t > K.
+        mu_stat, sd_stat = float(mu_j[-1]) / K, float(max(sd_j[-1], 1e-6)) / math.sqrt(K)
+    else:
+        mu_stat, sd_stat = float(mu_j[-1]), float(max(sd_j[-1], 1e-6))
+    # referência do encolhimento na escala de CADA passo: constante para um nulo estacionário,
+    # crescendo com sqrt(t) para um acumulador. Encolher a coluna j de um `cumsum` para um escalar
+    # seria comparar escalas diferentes e estragaria justamente as colunas mais tardias.
+    steps = np.arange(1, mat.shape[1] + 1, dtype=np.float64)
+    sd_ref = sd_stat * np.sqrt(steps) if kind == "cumsum" else np.full(mat.shape[1], sd_stat)
+    n_reps = float(mat.shape[0])
+    wgt = n_reps / (n_reps + pseudo)
+    sd_j = np.sqrt(np.maximum(wgt * sd_j ** 2 + (1.0 - wgt) * sd_ref ** 2, 1e-12))
+
+    mu_j = _smooth(mu_j, smooth_w)
+    sd_j = np.maximum(_smooth(sd_j, smooth_w), 1e-6)
+
+    out[name] = NullSpec(
+        mu_stat, sd_stat, min_t=1, kind=kind,
+        table=(tuple(float(v) for v in mu_j), tuple(float(v) for v in sd_j)),
+    )
+
+
+def compute_null_stats(e_hist: np.ndarray, h0, cfg) -> dict:
+    """{nome_da_feature: NullSpec}. Chamado uma vez por série no fim de `fit_h0`.
+
+    `h0` é o `H0Params` já montado, porém com `null_stats={}` — é ele que `fit_h0` completa depois
+    via `dataclasses.replace`. Receber o objeto inteiro (em vez de meia dúzia de arrays soltos) é o
+    que permite rodar os BLOCOS REAIS sobre o histórico: `CusumBlock.reset` e `AccumulatorBlock.reset`
+    exigem um `h0` de verdade (sigma_u, quantis, sorted_abs_e_hist)."""
     cal_cfg = cfg.calibration
     if not cal_cfg.enabled:
         return {}
@@ -165,10 +281,15 @@ def compute_null_stats(
     if n_h < 64:
         return {}
 
+    sorted_e_hist = h0.sorted_e_hist
+    sorted_abs_e_hist = h0.sorted_abs_e_hist
+    rff_href, rff_href_joint = h0.rff_href, h0.rff_href_joint
+
     out: dict = {}
     pseudo = cal_cfg.shrink_pseudo
     e2 = e * e
     exceed2 = (np.abs(e) > 2.0).astype(np.float64)
+
 
     # --- accum: variância de janela (ln) e fração de excedência ---
     for w in cfg.state.window_sizes:
@@ -209,6 +330,10 @@ def compute_null_stats(
     # --- dependência (P1): roda o próprio DependenceBlock sobre o histórico (garante equivalência
     # online/nulo por construção). ρ₁ de |e|/e² tem kind="rho" (escala 1/sqrt(n), disponível cedo);
     # a massa multi-lag não tem lei fechada -> kind="none" (janela cheia). ---
+    # `e_vol_hist=None` mantém o conjunto de features do V4: passar o `e_vol` real destrava
+    # `dep_mass_evol_w100_cal`, que entrou no braço F1.a e regrediu por R0 junto com o resto
+    # (docs/BACKLOG_TSAUC.md). O replay continua disponível em `history_evol` para quando um braço
+    # que precise dele for reaberto.
     dep_series = dep_mod.history_null_series(e, cfg)
     for name, series in dep_series.items():
         w = int(name.rsplit("_w", 1)[1])
@@ -255,12 +380,39 @@ def compute_null_stats(
             j = n_scales - 1
         _add(out, name, arr, min_t=(2 ** (j + 1)) * min_coeffs, n_eff=len(arr), theory=None, pseudo=0.0)
 
+    # --- F1.a: estatísticas RECURSIVAS (CUSUMs, autocorrelação de janela expansiva). O nulo vem de
+    # réplicas com reinício, não de uma passada contínua — ver `_add_from_replicates`. A whitelist
+    # está em YAML para que abrir a cobertura de F1.b seja um diff de configuração. ---
+    kind_of = dict(cal_cfg.recursive_features)
+    if kind_of:
+        # F1.0: a série `e_vol` do online reproduzida sobre o histórico — só é calculada quando
+        # algum braço recursivo está ligado, porque custa uma passada sequencial pelo histórico
+        e_vol = history_evol(e, h0.rho1_abs_e, cfg)
+        K, smooth_w = cal_cfg.transient_restart_every, cal_cfg.transient_smooth_w
+        for prefix, mod in (("cusum_", cusum_mod), ("accum_", accum_mod), ("conformal_", conf_mod)):
+            sub = frozenset(n for n in kind_of if n.startswith(prefix))
+            if not sub:
+                continue  # não paga a passada de um bloco que a whitelist não pediu
+            reps = mod.history_null_series(
+                e, e_vol, h0, cfg, K, max_reps=cal_cfg.transient_max_reps, wanted=sub
+            )
+            for name in sorted(reps):  # ordem estável, independente da iteração do dict
+                _add_from_replicates(out, name, reps[name], pseudo, smooth_w, kind=kind_of[name])
+
     return out
 
 
 def _null_at(spec: NullSpec, t: int) -> tuple[float, float]:
     """(mu, sd) do nulo no número efetivo de amostras n = min(t, window), transportando o nulo
     medido na janela cheia pela lei de escala de `spec.kind` (ver NullSpec)."""
+    # transiente medido tem precedência: é o nulo exato daquele passo, não uma extrapolação
+    if spec.table and t <= len(spec.table[0]):
+        return spec.table[0][t - 1], spec.table[1][t - 1]
+
+    if spec.kind == "cumsum":
+        # acumulador sem reset: mu e sd guardam a deriva POR PASSO e a escala POR sqrt(passo)
+        return spec.mu * t, max(spec.sd * math.sqrt(t), 1e-9)
+
     if spec.kind == "none" or spec.kind == "z" or spec.window <= 0:
         return spec.mu, spec.sd
 
@@ -296,6 +448,13 @@ def apply_calibration(feats: dict, null_stats: dict, t: int) -> None:
     """Acrescenta `<nome>_cal` a `feats`, in-place. NaN quando ainda não há amostras suficientes
     (t < min_t) ou quando o valor cru é NaN — nunca inventa um número."""
     for name, spec in null_stats.items():
+        if name not in feats:
+            # O bloco que emitia esta coluna não está em `default_blocks()`. `compute_null_stats`
+            # roda uma lista fixa de `history_null_series`, então desligar um bloco deixava aqui uma
+            # coluna `_cal` ÓRFÃ — NaN em todas as linhas, largura pura sem informação. Medido ao
+            # podar LMomentBlock (2026-07-22): 4 colunas fantasma. A calibração tem de seguir o
+            # conjunto de blocos ativo, não uma lista paralela.
+            continue
         raw = feats.get(name)
         if raw is None or t < spec.min_t or not math.isfinite(raw):
             feats[f"{name}_cal"] = math.nan

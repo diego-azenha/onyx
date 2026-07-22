@@ -20,6 +20,8 @@ import bisect
 import math
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from sbrt.utils.numerics import logsumexp
 
 if TYPE_CHECKING:
@@ -80,3 +82,52 @@ class ConformalBlock:
             "conformal_logm_right": logsumexp(list(self.L_right.values())) - self._log_k,
             "conformal_logm_sign": logsumexp(list(self.L_sign.values())) - self._log_k,
         }
+
+
+def history_null_series(
+    e_hist, e_vol_hist, h0: "H0Params", cfg: "Config", restart_every: int,
+    max_reps: int = 0, wanted: frozenset = frozenset(),
+) -> dict:
+    """Réplicas com reinício do próprio ConformalBlock sobre o histórico (F1.b-1). Mesmo contrato de
+    `cusum.history_null_series` — ver aquela docstring para o porquê das réplicas.
+
+    **Por que estas features precisam de calibração mais do que qualquer outra.** Sob H0 o incremento
+    de cada aposta tem esperança negativa: com p ~ U(0,1) vale E[log p] = −1, logo
+    E[inc] = log ε + (ε−1)(−1) = log ε − ε + 1 < 0 para todo ε ≠ 1. As variantes sem reset
+    (`abs`, `right`, `sign`) portanto **derivam linearmente em t**, com inclinação que depende da
+    série (via o quanto a ECDF do histórico se ajusta às inovações dela). No corte transversal de um
+    passo t, o nível dessas features é dominado por t·deriva(série) — uma escala idiossincrática que
+    nada tem a ver com quebra, e que a TS-AUC pune diretamente. Daí `kind="cumsum"`.
+
+    **Viés in-sample.** Rodar o bloco sobre o próprio histórico compara cada ponto contra uma ECDF que
+    o contém, enquanto o online compara pontos novos. A diferença no p-value de mid-rank é O(1/n_h) —
+    com n_h típico de 3.000, ~0,03%. Medido e desprezível frente ao dp do nulo, então não vale a
+    complexidade de leave-one-out ou split do histórico."""
+    e = np.asarray(e_hist, dtype=np.float64)
+    e_vol = np.asarray(e_vol_hist, dtype=np.float64)
+    K = int(restart_every)
+    n_reps = len(e) // K
+    if max_reps > 0:
+        n_reps = min(n_reps, int(max_reps))
+    if n_reps < 4 or K < 2:
+        return {}
+
+    acc: dict = {}
+    for r in range(n_reps):
+        blk = ConformalBlock()
+        blk.reset(h0, cfg)
+        base = r * K
+        for j in range(K):
+            i = base + j
+            ev = float(e[i])
+            blk.update(ev, ev, float(e_vol[i]), j + 1)
+            feats = blk.features()
+            for name in (wanted or feats):
+                val = feats.get(name)
+                if val is None:
+                    continue
+                mat = acc.get(name)
+                if mat is None:
+                    mat = acc[name] = np.full((n_reps, K), np.nan, dtype=np.float64)
+                mat[r, j] = val
+    return acc

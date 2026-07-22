@@ -28,9 +28,14 @@ def test_scorer_feature_order_stable_and_no_leakage_of_T(cfg):
     scorer = StreamScorer(h0, default_blocks(), None, cfg)
     feats = scorer.update_features(float(rng.randn()))
     assert "T" not in feats and "t_total" not in feats
-    # 183 = conjunto de features do V4, o melhor modelo medido (docs/HISTORICO.md §1). O V5 tinha
-    # 178 (−8 L-momentos, −4 dep w050, +7 BOCPD) e regrediu por R0 — revertido (§9).
-    assert len(feats) == 183
+    # 189 = 183 do V4 + 6 do MultiRepBlock. ESTE NUMERO TEM DE CASAR COM
+    # `resources/feature_schema.json`: o scorer e o modelo empacotado sao um par, e um scorer que
+    # emite colunas diferentes das que o modelo espera quebra a submissao silenciosamente.
+    #
+    # Medido com K sementes limpas por lado, empacotados: V4 0,6057 | +mrep 0,6120 | V5 0,6117 |
+    # V5+mrep 0,6091. Os ganhos NAO somam -- juntar V5 e mrep piora -0,0024 contra o V5 sozinho,
+    # nas 3 sementes. Mexer neste numero exige R0 de K sementes E reempacotar `resources/`.
+    assert len(feats) == 189
 
 
 def test_scorer_new_instance_per_series_gives_same_result_regardless_of_order(cfg):

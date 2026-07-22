@@ -15,6 +15,7 @@ Em modo `supervised`, treina o pipeline completo (Frente H) e persiste o `ModelE
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from typing import Iterable, List, Optional, Tuple
 
 import joblib
@@ -37,6 +38,7 @@ def train(
     if cfg.model.mode == "supervised":
         from sbrt.model.dataset import SeriesRecord, build_training_rows
         from sbrt.model.weights import compute_row_weights
+        from sbrt.model.fuse import fuse_boosters
         from sbrt.model.train import train as train_ensemble
 
         records = [
@@ -50,7 +52,19 @@ def train(
         ]
         rows = build_training_rows(records, cfg, n_jobs=cfg.model.dataset_n_jobs)
         weights = compute_row_weights(rows, cfg)
-        ensemble, _oof_pred = train_ensemble(rows, weights, cfg)
+
+        # BAGGING DE SEMENTES (2026-07-22). A nuvem TREINA DO ZERO -- `resources/` nao e usado aqui --
+        # entao o bagging tem de acontecer neste laco, ou a submissao perde os +0,0048 medidos.
+        # Cada semente muda so o sorteio interno do LightGBM (`boost_seed`), NAO os folds
+        # (`cfg.seed` intocado), e os K boosters sao FUNDIDOS num so para nao multiplicar por K o
+        # custo de inferencia por passo. Ver docs/BACKLOG_TSAUC.md, "Bagging de sementes".
+        seeds = list(cfg.lightgbm.bag_seeds) or [cfg.lightgbm.boost_seed or cfg.seed]
+        boosters, ensemble = [], None
+        for s in seeds:
+            cfg_s = replace(cfg, lightgbm=replace(cfg.lightgbm, boost_seed=int(s)))
+            ensemble, _oof_pred = train_ensemble(rows, weights, cfg_s)
+            boosters.append(fuse_boosters(ensemble.boosters))
+        ensemble = replace(ensemble, boosters=[fuse_boosters(boosters)])
         ensemble.save(model_directory_path)
         joblib.dump({"mode": "supervised"}, os.path.join(model_directory_path, _MODEL_FILE))
     else:

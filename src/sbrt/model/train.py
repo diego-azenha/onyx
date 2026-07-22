@@ -115,7 +115,12 @@ def train(rows: pd.DataFrame, weights: np.ndarray, cfg, progress: bool = True) -
         deterministic=lgb_cfg.deterministic,
         force_row_wise=lgb_cfg.force_row_wise,
         num_threads=lgb_cfg.train_num_threads,
-        seed=cfg.seed,
+        # `boost_seed` existe SO para calibrar o nulo da propria regra de decisao de R0. Ele muda o
+        # sorteio de `bagging_fraction`/`feature_fraction` **sem** mexer nos folds (que continuam
+        # vindo de `cfg.seed`), isolando a unica fonte de variancia que NAO se cancela no bootstrap
+        # pareado: o booster e um sorteio aleatorio, e o bootstrap por serie trata as predicoes como
+        # se fossem fixas. Ver docs/BACKLOG_TSAUC.md, seccao "O nulo da regra de decisao".
+        seed=lgb_cfg.boost_seed if lgb_cfg.boost_seed is not None else cfg.seed,
         verbose=-1,
     )
 
@@ -148,7 +153,14 @@ def train(rows: pd.DataFrame, weights: np.ndarray, cfg, progress: bool = True) -
             valid_sets=[dvalid],
             feval=feval,
             callbacks=[
-                lgb.early_stopping(lgb_cfg.early_stopping_rounds, first_metric_only=True, verbose=False),
+                # `early_stopping_rounds <= 0` desliga a parada antecipada e treina exatamente
+                # `n_estimators_cap` rodadas. Existe porque a parada antecipada e uma FONTE DE
+                # VARIANCIA medida: o numero de arvores do mesmo fold varia 51->103 so trocando a
+                # semente, e o dp de 0,0041 na TS-AUC que isso produz e maior que qualquer efeito de
+                # feature ja medido no projeto (docs/BACKLOG_TSAUC.md, "O nulo da regra de decisao").
+                # Rodadas fixas trocam um pouco de vies por muito menos ruido de sorteio.
+                *([lgb.early_stopping(lgb_cfg.early_stopping_rounds, first_metric_only=True, verbose=False)]
+                  if lgb_cfg.early_stopping_rounds > 0 else []),
                 lgb.log_evaluation(period=0),
                 lgb.record_evaluation(evals_result),
             ],
@@ -212,7 +224,12 @@ def train_rank(rows: pd.DataFrame, cfg, progress: bool = True) -> tuple:
         deterministic=lgb_cfg.deterministic,
         force_row_wise=lgb_cfg.force_row_wise,
         num_threads=lgb_cfg.train_num_threads,
-        seed=cfg.seed,
+        # `boost_seed` existe SO para calibrar o nulo da propria regra de decisao de R0. Ele muda o
+        # sorteio de `bagging_fraction`/`feature_fraction` **sem** mexer nos folds (que continuam
+        # vindo de `cfg.seed`), isolando a unica fonte de variancia que NAO se cancela no bootstrap
+        # pareado: o booster e um sorteio aleatorio, e o bootstrap por serie trata as predicoes como
+        # se fossem fixas. Ver docs/BACKLOG_TSAUC.md, seccao "O nulo da regra de decisao".
+        seed=lgb_cfg.boost_seed if lgb_cfg.boost_seed is not None else cfg.seed,
         verbose=-1,
     )
 
@@ -264,7 +281,14 @@ def train_rank(rows: pd.DataFrame, cfg, progress: bool = True) -> tuple:
             valid_sets=[dvalid],
             feval=feval,
             callbacks=[
-                lgb.early_stopping(lgb_cfg.early_stopping_rounds, first_metric_only=True, verbose=False),
+                # `early_stopping_rounds <= 0` desliga a parada antecipada e treina exatamente
+                # `n_estimators_cap` rodadas. Existe porque a parada antecipada e uma FONTE DE
+                # VARIANCIA medida: o numero de arvores do mesmo fold varia 51->103 so trocando a
+                # semente, e o dp de 0,0041 na TS-AUC que isso produz e maior que qualquer efeito de
+                # feature ja medido no projeto (docs/BACKLOG_TSAUC.md, "O nulo da regra de decisao").
+                # Rodadas fixas trocam um pouco de vies por muito menos ruido de sorteio.
+                *([lgb.early_stopping(lgb_cfg.early_stopping_rounds, first_metric_only=True, verbose=False)]
+                  if lgb_cfg.early_stopping_rounds > 0 else []),
                 lgb.log_evaluation(period=0),
                 lgb.record_evaluation(evals_result),
             ],

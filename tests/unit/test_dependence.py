@@ -10,7 +10,7 @@ import math
 import numpy as np
 
 from sbrt.robustness.generators import generate
-from sbrt.state.dependence import DependenceBlock, _RollingAutocorr
+from sbrt.state.dependence import DependenceBlock, _RollingAutocorr, history_null_series
 from sbrt.state.h0 import fit_h0
 
 
@@ -97,9 +97,30 @@ def test_calibration_registered_for_dependence(cfg):
     names = set(h0.null_stats)
     assert "dep_absrho1_w100" in names and "dep_sqrho1_w100" in names
     assert "dep_mass_abs_w100" in names
-    assert "dep_mass_evol_w100" not in names  # e_vol não calibrado (indisponível no histórico)
+    # F1.0 tornou a massa vol-ajustada calibrável (o `e_vol` real do histórico existe em
+    # `calibration.history_evol`), e ela entrou no braço F1.a. O braço REGREDIU por R0 — Δ geral
+    # −0,0069, IC exclui 0 contra (docs/BACKLOG_TSAUC.md) — e foi revertido inteiro, então a
+    # calibração volta a rodar com `e_vol ≈ e` e esta coluna fica de fora.
+    assert "dep_mass_evol_w100" not in names
     assert h0.null_stats["dep_absrho1_w100"].kind == "rho"
     assert h0.null_stats["dep_mass_abs_w100"].kind == "none"
+
+
+def test_history_null_series_e_based_features_are_unaffected_by_evol(cfg):
+    """Ligar o `e_vol` real não pode mexer no nulo já medido das features baseadas em `e` — só
+    `dep_mass_evol` usa o terceiro argumento do bloco. Se esta igualdade quebrar, a mudança deixou de
+    ser aditiva e passa a exigir R0 própria antes de entrar."""
+    rng = np.random.RandomState(5)
+    e = rng.randn(2000)
+    e_vol = rng.randn(2000)  # deliberadamente descorrelacionado de `e`
+
+    sem = history_null_series(e, cfg)
+    com = history_null_series(e, cfg, e_vol_hist=e_vol)
+
+    assert "dep_mass_evol_w100" in com and "dep_mass_evol_w100" not in sem
+    for name, series in sem.items():
+        # equal_nan: as duas séries começam com NaN de warm-up, e NaN != NaN
+        assert np.array_equal(np.asarray(series), np.asarray(com[name]), equal_nan=True), name
 
 
 def test_calibration_null_matches_block_over_history(cfg):
