@@ -42,11 +42,24 @@ def main() -> None:
     parser.add_argument("--rows", default="data/processed/train_rows.parquet")
     parser.add_argument("--out-dir", default="artifacts/sweep")
     parser.add_argument("--grid", default=None, help="JSON dict de listas, sobrescreve DEFAULT_GRID")
+    # C4: sem estes dois, cada celula difere do incumbente em MAIS DUAS coisas alem dos HPs (o
+    # incumbente treina com pesos de detectabilidade X1-soft e com 183 features, sem spec_/ord_/mrep_),
+    # e o compare_oof contra ele mediria a soma dos tres efeitos, nao o HP.
+    parser.add_argument("--drop-prefix", nargs="*", default=[], metavar="PREFIXO",
+                        help="remove colunas de feature com estes prefixos (igual a scripts/train.py)")
+    parser.add_argument("--detectability-mode", default="none", choices=["none", "hard", "soft", "ramp"],
+                        help="X1: modo de ponderacao por detectabilidade (o incumbente usa 'soft')")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
     rows = pd.read_parquet(args.rows)
-    weights = compute_row_weights(rows, cfg)
+    if args.drop_prefix:
+        drop = [c for c in rows.columns if c.startswith(tuple(args.drop_prefix))]
+        rows = rows.drop(columns=drop)
+        print(f"removidas {len(drop)} colunas por --drop-prefix {args.drop_prefix}")
+    weights = compute_row_weights(rows, cfg, detectability_mode=args.detectability_mode)
+    if args.detectability_mode != "none":
+        print(f"X1: pesos de detectabilidade modo={args.detectability_mode}")
 
     grid = json.loads(args.grid) if args.grid else DEFAULT_GRID
     keys = list(grid.keys())

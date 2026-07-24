@@ -40,6 +40,12 @@ baseline→V4 (+0,0344) concorda em sinal e ordem de magnitude com o OOF, valida
 **Esse conjunto não resolve V3 vs V4** — com 100 séries o erro-padrão é ≈0,054, uma ordem de
 magnitude acima da diferença.
 
+> **Errata (2026-07-22) e X1 (2026-07-24), ver §13.** O 0,6100 do V4 é a semente 42 (contaminada); o V4
+> real é **0,6018** (média de 4 sementes limpas) / **0,6065** (bag). Sobre esse baseline, **X1
+> (supervisão ponderada por detectabilidade, `soft`) rende +0,0040 [+0,0005, +0,0073], IC exclui 0** — a
+> única aposta da campanha X0–X4 adotada, hoje ligada por `configs/default.yaml:weights`. A régua de
+> decisão correta (semente 42 fora) é **~0,0014**, não 0,0058.
+
 ---
 
 ## 2. Rodada 1 — Diagnóstico da TS-AUC baixa (três intervenções, todas revertidas)
@@ -412,3 +418,203 @@ V-ema no pós-processamento (quando sobrar uma sonda).
    critério validado), não por `ts_auc_by_t`.
 6. **Recalibrar `drift_slope_abs_max`** (1e-4 reprova T2/T6/T10/T12 por slopes da ordem de −0,0005;
    provavelmente limiar apertado demais, não falha real) — decisão de tuning com validação própria.
+
+---
+
+## 13. Rodada 9 — Campanha de ruptura (X0–X4): **X1 adotado**, régua recalibrada
+
+**Gatilho.** `BRAINSTORM_RUPTURA_TSAUC.md`: cinco apostas ortogonais (X0–X4), cada uma com mecanismo,
+gate barato, previsão pré-registrada e critério de morte. Baseline: V4 legítimo (`train_rows_3eixos
+--drop-prefix spec_ ord_ mrep_` = 183 feat), OOF K=4 (sementes 777/101/202/303) = **0,6018** — o número
+real, não os 0,6100 históricos (semente 42, contaminada por seleção; ver a errata do BACKLOG).
+
+**Resultado: 1 vitória, 4 mortes, e uma recalibração da régua mais valiosa que qualquer braço.**
+
+| braço | eixo | resultado | decisão |
+|---|---|---|---|
+| **X1** | supervisão ponderada por detectabilidade | **soft +0,0040 [+0,0005, +0,0073]**, hard +0,0036 [+0,0004, +0,0071] — IC exclui 0 no agregado E em 50–150/150–400 | **ADOTADO (soft)** |
+| X0 | rodadas fixas por curva média | σ_seed não caiu (0,0010→0,0011); Δ logloss −0,0019 (exclui 0 *contra*), tsauc −0,0028 | morto |
+| X2 | canal de média (2 defeitos) | gate D1: AUC da família média por tercil de `ar_r2` = baixo 0,636 / médio 0,577 / **alto 0,638** — persistência NÃO cega (Defeito 1 refutado) | morto no gate (build evitado) |
+| X3 | studentização por CDF nula | reordena (corr_xs 0,33 < 0,95) mas −0,0294; mesmo destino da centragem aditiva | morto |
+| X4 | injeção sintética | probe de artefato obrigatório: discriminador real-vs-sintético sob H0 = **AUC 0,9998** (>>0,6) → gerador vaza (portador com `meta_h0` de histórico truncado) | bloqueado (build evitado) |
+
+**X1 — o que foi adotado.** O peso de cada linha POSITIVA vira `w ×= clip(d_i/q95, 0,3, 1)`, com `d_i` a
+detectabilidade do censo A1 (norma L2 dos eixos `delta_logvar_e/rho1/kurt/exceed` padronizados × √m_bucket).
+Tira gradiente dos positivos que não carregam sinal no passo em que pesam (magnitude baixa; linhas logo
+após τ). É peso do PROFESSOR — usa τ só no treino, como o próprio alvo `y=1{τ≤t}`; a inferência é
+intocada. Só afeta séries de quebra precoce (0<τ<50, ~712 séries); as demais ficam com peso 1. Ganho
+concentrado em 50–150 (+0,008) e 150–400 (+0,004), os buckets de maior peso da métrica.
+
+**Implementação (produção).** `configs/default.yaml:weights.detectability_mode: soft`
+(+ `WeightsConfig` em `config.py`). A nuvem treina do zero e não tem o `detectability.csv` local, então
+`adapter/platform.py` computa o mapa `d_i` **inline** dos registros de treino via
+`model/detectability.py:compute_detectability_map` (mesma matemática de `break_type_census` +
+`detectability_report`), e passa a `model/weights.py:compute_row_weights`. Notebook de submissão
+regenerado e **verificado bit-a-bit** (`scripts/verify_submission_notebook.py`: max|Δscore| = 0). Custo:
+só treino (um passe extra de fit_h0/whiten por série); latência de inferência inalterada.
+
+**A recalibração da régua (subproduto do X0, mais importante que o X0).** A tese σ_seed ≈ 0,0041 / barra
+0,0058 que fundamentava o BACKLOG era **artefato de incluir a semente 42**. Entre as 4 sementes limpas, o
+σ single-seed é **0,0010**; o EP da diferença de duas médias K=4 é **0,0007** ⇒ **barra 2-EP ≈ 0,0014**,
+~4× mais fina. Sob 0,0058 a vitória do X1 (+0,0040) teria sido "inconclusiva"; contra 0,0014 ela é ~2,5×
+a barra. **Régua nova para todo braço futuro: ~0,0014 (K=4, semente 42 fora).**
+
+**Disciplina que se pagou.** Os gates baratos (D1 em minutos; probe de artefato antes do braço)
+mataram X2 e X4 **antes** de qualquer build/K=4 — exatamente o que os gates existem para fazer.
+
+**Pendências.** Submissão oficial do V4+X1-soft (âncora em `artifacts/reports/submission_log.md`, criado
+nesta rodada) para confirmar contra o placar — o mapa OOF↔placar continua desconhecido (um ponto só).
+Reabrir X4 exige redesenhar a construção do portador (~2 dias) para o H0 sintético casar com o real.
+
+---
+
+## 14. Rodada 10 — Campanha B/C: **B6 adotado**, e a costura C5 nasceu e morreu no mesmo dia
+
+**Gatilho.** `BRAINSTORM_RUPTURA_V2.md` (o item de dados de 2025 foi descartado: não é permitido).
+Baseline/incumbente de toda a rodada: **V4 + X1-soft, K=4 sementes limpas = `oof_x1_soft_bag4` = 0,6102**.
+Régua: **~0,0014** (a barra recalibrada da §13). Duas sessões: a primeira caiu no meio do B4 e foi
+reconstruída do transcript; os veredictos abaixo cobrem as duas.
+
+### 14.1 Placar da rodada
+
+| braço | o que era | Δ vs incumbente | decisão |
+|---|---|---|---|
+| **B6** | `feature_contri=0,6` nas colunas `meta_h0_*` | **+0,0023** [−0,0010, +0,0053] geral; **150–400 +0,0049** [0,0012, 0,0085] e **t>400 +0,0048** [0,0009, 0,0084] (IC exclui 0) | **ADOTADO** (ver 14.3) |
+| A1 | EWMA assimétrico (α_sobe 0,8 / α_desce 0,2) no pós-processo | +0,0005 [0,0000, 0,0010]; 150–400 +0,0009 | passa sozinho, **fora do pacote** (14.4) |
+| T0.1 | diagnóstico de pares difíceis / negativos quentes | perda **DIFUSA**: 0,5% piores séries = 2,0% da massa de pares invertidos; 5% = 16%; 10% = 29%. 60 controles quentes marcados como rótulo-suspeito = 0,60% das séries | sem alvo concentrado |
+| T0.2 | rank-average das 4 sementes X1-soft | −0,0001 geral, ~0 em todos os buckets | eixo fechado |
+| A2 | stacking heterogêneo (binário+rank+fallback) | membro rank (lambdarank) rodou >15 min sem saída neste ambiente; membro historicamente fraco (~0,585 vs 0,610) | bloqueado pelo ambiente |
+| A3 | emulador do nulo REAL (LGBM pinball q10/q50/q90) + studentização | 0,6102 → **0,5645**, Δ **−0,0457** | morto; **fecha o eixo** (14.5) |
+| B1 | pesos de linha por `w_t = n_pos·n_neg` | −0,0030 [−0,0058, −0,0002] (exclui 0 CONTRA); 50–150 −0,0065 | morto |
+| B2 | variante `ramp` do X1 | −0,0038 [−0,0073, +0,0001]; 50–150 −0,0068 e 150–400 −0,0035 excluem 0 contra | morto (confirma `soft` como o sabor certo) |
+| B3 | rebaixar negativos das 60 séries marcadas em T0.1 | −0,0009 [−0,0036, +0,0015] | morto (~0, como T0.1 previu) |
+| B4 | objetivo custom `(1−α)·logloss + α·pairwise` intra-t | α=0,3 **−0,0035**; α=0,1 +0,0007 (metade da barra) | morto / inconclusivo (14.6) |
+| B5 | `monotone_constraints=+1` em 9 acumuladores de LLR | −0,0005 [−0,0034, +0,0022] | neutro, morto |
+| C2 | conserto do suporte do portador "as-of" + re-probe | probe real-vs-sintético **0,9993** mesmo com o conserto | bloqueado (14.5) |
+| C3 | bagging de partição (2 partições × 4 sementes) | partB 0,6029 vs partA 0,6102; bag das duas −0,0014 [−0,0039, +0,0013] | morto, **mas achou o principal** (14.2) |
+| C5 | modelo por regime de t | ver 14.3 — **nasceu vencedor e foi retratado no mesmo dia** | costura descartada |
+| C4 | varredura de hiperparâmetros | **NÃO RODADO** (decisão do usuário, 14.7) | pulado |
+
+### 14.2 O achado que reorganiza a rodada: variância de PARTIÇÃO
+
+O C3 mediu o que ninguém tinha medido: trocar a **partição de folds** (`cfg.seed` 42→43), mantendo
+tudo o mais, move a TS-AUC em **~0,007** — **7× a variância de semente de boosting** (0,0010) e **5× a
+barra** (0,0014). E a partição 42 é a **sortuda**: o mesmo X1-soft mede 0,6102 em A e **0,6029** em B.
+É o mesmo padrão da semente 42 da §13, um nível acima. **Consequência prática: qualquer efeito da ordem
+de 0,003 medido numa partição só é indistinguível de sorte de partição.** Foi exatamente isto que
+derrubou a costura C5 (14.3).
+
+### 14.3 C5 — a costura por regime: adotada de manhã, retratada à tarde
+
+O C5 original pedia dois modelos treinados (t≤64 / t>64). Não foi preciso: o perfil por bucket do B6
+(−0,0029 em 50–150, +0,0049/+0,0048 acima de 150) **é** o conflito de regimes que o C5 postulava, e a
+**C1** (`MODELO.md` §1.2) autoriza trocar de modelo por t — a `AUC_t` só enxerga um modelo dentro de
+cada passo, então costurar dois OOFs numa borda de bucket é legítimo pela métrica, de graça.
+
+Na partição A a costura mediu **+0,0032** [+0,0012, +0,0051] (exclui 0; 2,3× a barra), com dois sinais
+de que não era otimismo de seleção: os folds de **confirmação** deram Δ maior que os de seleção
+(+0,0044 vs +0,0025), e o ganho é um **platô** no ponto de corte (+0,0028 a +0,0032 para qualquer corte
+entre 100 e 200), não uma quina.
+
+**A replicação na partição B derrubou o desenho.** O ganho da costura sobre o baseline replica
+(+0,0032 em A, +0,0040 em B) — o efeito é real. Mas em B o **B6 sozinho (+0,0049) BATE a costura
+(+0,0040)**. O porquê está no bucket que motivava a costura:
+
+| bucket | B6 − X1-soft, partição A | partição B |
+|---|---|---|
+| t≤50 | −0,0011 | −0,0016 |
+| **50–150** | **−0,0029** | **+0,0039** ← troca de sinal |
+| 150–400 | +0,0049 | +0,0065 |
+| t>400 | +0,0048 | +0,0050 |
+
+O conflito de regimes era **ruído de partição**, não estrutura. O que replica é o ganho do B6 em t alto
+e um −0,001 pequeno e consistente em t≤50 (bucket de peso desprezível na métrica).
+
+**Decisão: adota-se o B6 SOZINHO.** Um só modelo, sem dobrar o treino na nuvem, melhor na partição que
+não foi usada para desenhá-lo, e implantável por **um knob de config** (`lightgbm.feature_contri_meta:
+0.6`) — sem tocar em `adapter/platform.py`, sem custo extra de inferência.
+
+**A evidência formal do B6, nas duas partições** (`compare_b6_contri06.json`, `compare_b6_partB.json`):
+
+| | partição 42 (a sortuda) | **partição 43 (independente)** |
+|---|---|---|
+| geral | +0,0023 [−0,0010, +0,0053] (inclui 0) | **+0,0049 [+0,0018, +0,0079] EXCLUI 0** |
+| 150–400 | +0,0049 [0,0012, 0,0085] exclui 0 | **+0,0065 [0,0030, 0,0102] exclui 0** |
+| t>400 | +0,0048 [0,0009, 0,0084] exclui 0 | **+0,0050 [0,0017, 0,0084] exclui 0** |
+
+Na partição 42 o agregado era inconclusivo e só os buckets altos passavam; **na partição que não foi
+usada para desenhar nada, o IC do agregado exclui 0**. Média das duas ~**+0,0036** = 2,6× a barra. É a
+evidência mais forte da campanha, e veio justamente da réplica que derrubou a costura.
+
+### 14.4 A1 fica fora do pacote
+
+O A1 passa sozinho (+0,0005), mas **em cima do B6** rende só +0,0004 global e +0,0004 com gate em
+t>150 — ambos abaixo da barra. Motivo: A1 também é um braço de t ALTO (+0,0009/+0,0012 nos dois
+buckets altos) e **se sobrepõe ao B6**. Somar os dois não soma os ganhos. Código preservado
+(`postproc_vema_probe.py`, `apply_vema_oof.py`, `monotonicity.ema_asym_step`).
+
+### 14.5 Dois eixos FECHADOS por medição
+
+1. **Comparabilidade auto-referencial (studentizar o score pelo nulo da própria série).** Três mortes,
+   cada uma com um nulo melhor que a anterior: centragem aditiva −0,002, X3 (CDF nula do histórico)
+   −0,029, **A3 (emulador do nulo REAL, pinball q10/q50/q90 out-of-fold) −0,046**. A cláusula
+   pré-registrada do A3 era justamente "se falhar, fecha o eixo". **Fechado.**
+2. **Fábrica de nulos "as-of" / injeção sintética.** X4 probe 0,9998, C2 (com conserto de suporte)
+   0,9993. A causa não é suporte de comprimento: é um **fosso de domínio** — o online real é do
+   período 2 e o `meta_h0`/whitening é ajustado no histórico inteiro, enquanto o sintético é uma
+   fatia do próprio histórico com H0 ajustado no histórico anterior (limpo demais, dentro do regime).
+   Reabrir exige redesenhar o portador (~2 dias).
+
+### 14.6 B4 — dois defeitos de código achados antes do veredicto
+
+O braço estava cabeado desde a sessão que caiu. Antes de gastar ~3 h em 2×K=4, dois diagnósticos de
+~12 min (cap 200, semente 777) resolveram — e acharam dois defeitos reais:
+
+1. **Desempenho.** O pré-sorteio de pares varria as ~506k linhas positivas em laço Python, com uma
+   varredura de 2,5 M linhas por valor de t. Reescrito como um `groupby` sobre ~399 valores de t:
+   **60 s → 0,2 s por fold**.
+2. **Bug.** Com objetivo **custom** o LightGBM entrega ao `feval` o **score bruto** (com o objetivo
+   embutido `binary`, entrega probabilidade). O braço binário chamava `_make_fold_feval` sem
+   `raw_to_prob`, então o `binary_logloss_diag` tratava score bruto como probabilidade — **5,20 contra
+   0,66 do incumbente** — e, como `early_stopping_metric=logloss`, **a parada antecipada rodava nesse
+   sinal sem sentido**. Corrigido (`raw_to_prob=use_pairwise`, `model/train.py`).
+
+Como a `ts_auc` é invariante à sigmoide (monótona), ela **nunca** foi afetada, o que deu um teste
+independente da regra de parada: melhor `ts_auc` por fold alcançável (limite superior, favorável ao
+B4). x1_soft 0,6102 / b6 0,6114 / **α=0,3 0,6067** (não ganha sob nenhuma regra de parada) / **α=0,1
+0,6109** (+0,0007, metade da barra, dentro de 1σ de uma semente). Nenhum K=4 foi gasto.
+
+### 14.7 O que NÃO foi rodado, e por quê
+
+**C4 (varredura de HP)** — pulado por decisão do usuário. Caça efeitos da ordem de 0,003, exatamente a
+escala que o 14.2 mostrou ser indistinguível de sorte de partição; a triagem selecionaria na partição
+42 e qualquer vencedor precisaria de confirmação na 43 antes de valer. O harness ficou **pronto**:
+`sweep_hyperparams.py` ganhou `--drop-prefix` e `--detectability-mode` — sem eles cada célula diferia
+do incumbente em **duas** coisas além dos HPs (o incumbente treina com pesos X1-soft e 183 features),
+e a varredura inteira teria sido confundida em silêncio.
+
+**B4 α=0,1 em K=4** — pulado: +0,0007 é metade da barra e cabe no ruído de uma semente.
+
+### 14.8 Armadilha de baseline (para o próximo agente)
+
+Quatro números quase iguais convivem no repositório e **um deles é contaminado**:
+
+| número | o que é |
+|---|---|
+| 0,6018 | média das TS-AUC **individuais** das 4 sementes limpas (é o que a §13 cita) |
+| **0,6062** | **bag das 4 sementes limpas** (`oof_x0_a_bag4`) — o bagging vale +0,0044. **Baseline correto** |
+| 0,6084 | `oof_b183_bag4` — é a média das sementes **(42, 101, 202, 777)**, ou seja, **contém a semente 42**; lê +0,0022 alto |
+| 0,6100 | semente 42 **sozinha** — o "0,6100 histórico" que a §13 já marca como contaminado |
+
+**Não use `oof_b183_bag4` como baseline.** O +0,0040 do X1 está medido contra `oof_x0_a_bag4` (limpo),
+que é o certo; contra o b183 contaminado o mesmo X1 mediria só +0,0018.
+
+### 14.9 Lições desta rodada
+
+- **Variância de partição > variância de semente > barra.** Antes de acreditar em qualquer efeito de
+  ~0,003, replicar na outra partição. Custou ~1 h e evitou empacotar um modelo mais caro e pior.
+- **Um perfil por bucket numa partição só não é estrutura.** O bucket 50–150 trocou de sinal.
+- **Diagnóstico barato antes de K=4.** O B4 fechou com dois runs de 12 min em vez de 3 h — e só porque
+  se olhou para o número de rodadas e para a logloss, não só para o Δ final.
+- **Métrica invariante = teste de graça.** A invariância da `ts_auc` à sigmoide isolou o veredicto do
+  B4 do bug de parada que existia ao mesmo tempo.

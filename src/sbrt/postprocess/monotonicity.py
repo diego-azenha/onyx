@@ -9,11 +9,20 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from sbrt.config import Config
 
-Mode = Literal["free", "hold", "soft", "ema"]
+Mode = Literal["free", "hold", "soft", "ema", "ema_asym"]
+
+
+def ema_asym_step(p: float, prev: float, alpha_up: float, alpha_down: float) -> float:
+    """A1 (BRAINSTORM_RUPTURA_V2.md §2.2): EWMA ASSIMÉTRICO -- α rápido na subida, lento na descida.
+    O jitter do score é ruído transversal puro nos passos seguintes; a assimetria respeita a semântica
+    'P(quebra já ocorreu)' (a evidência sobe rápido e decai devagar) sem o max-hold rígido que o CE1
+    matou. `alpha_up` >= `alpha_down`."""
+    alpha = alpha_up if p >= prev else alpha_down
+    return alpha * p + (1.0 - alpha) * prev
 
 
 def apply(p: float, prev: float | None, mode: Mode, cfg: "Config") -> float:
-    """mode='free' (default) = identidade. 'hold'/'soft'/'ema' só habilitados em
+    """mode='free' (default) = identidade. 'hold'/'soft'/'ema'/'ema_asym' só habilitados em
     configs/default.yaml se o gate G-mono (plano §9) tiver sido confirmado por submissão oficial."""
     if prev is None or mode == "free":
         return p
@@ -24,4 +33,6 @@ def apply(p: float, prev: float | None, mode: Mode, cfg: "Config") -> float:
     if mode == "ema":
         alpha = cfg.postprocess.ema_alpha
         return alpha * p + (1.0 - alpha) * prev
+    if mode == "ema_asym":
+        return ema_asym_step(p, prev, cfg.postprocess.ema_up_alpha, cfg.postprocess.ema_down_alpha)
     raise ValueError(f"modo de monotonicidade desconhecido: {mode!r}")

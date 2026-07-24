@@ -11,8 +11,11 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
+import os
+
 from sbrt.state.accumulators import AccumulatorBlock
 from sbrt.state.bayes_filter import BayesFilterBlock
+from sbrt.state.bocpd import BOCPDBlock
 from sbrt.state.calibration import apply_calibration
 from sbrt.state.conformal import ConformalBlock
 from sbrt.state.cusum import CusumBlock
@@ -34,7 +37,7 @@ if TYPE_CHECKING:
 
 
 def default_blocks() -> list:
-    return [
+    blocks = [
         AccumulatorBlock(),
         CusumBlock(),
         BayesFilterBlock(),
@@ -61,6 +64,14 @@ def default_blocks() -> list:
                              # [+0,0022, +0,0063], IC exclui 0 A FAVOR no agregado e no bucket-alvo
                              # `150<t≤400` declarado a priori. Custo ~+120 µs/passo (gate 1500).
     ]
+    # C6 (BRAINSTORM_RUPTURA_V2.md): braco OPT-IN do BOCPD, ligado so por variavel de ambiente
+    # (`SBRT_ENABLE_BOCPD=1`) para que o default de producao continue byte-a-byte o mesmo. O BOCPD
+    # entrou no V5 junto com a poda; o V5 regrediu, mas os dois componentes mediram positivo
+    # SEPARADOS (poda +0,0027, BOCPD +0,0029) -- este braco isola o BOCPD sobre o V4. Como o mesmo
+    # `default_blocks()` alimenta a build de treino E a inferencia (adapter/platform.py), a variavel
+    # tem de estar setada nos DOIS contextos, ou scorer e modelo deixam de casar (feature_schema).
+    if os.environ.get("SBRT_ENABLE_BOCPD") == "1":
+        blocks.append(BOCPDBlock())
     # Base: o conjunto do V4 (docs/HISTORICO.md §1), 183 colunas, + o MultiRepBlock = 189.
     #
     # `state/spectral.py` (8 colunas) e `state/ordinal.py` (5) foram medidos no MESMO ciclo, pela
@@ -83,7 +94,9 @@ def default_blocks() -> list:
     # (adotar só se o IC excluir 0 A FAVOR), V5 não passa e foi revertido (docs/HISTORICO.md §9).
     #
     # O bloco e o teste continuam em state/bocpd.py, reabríveis: o experimento que separa as duas
-    # mudanças empacotadas no V5 (V4 + BOCPD, SEM a poda) nunca foi rodado.
+    # mudanças empacotadas no V5 (V4 + BOCPD, SEM a poda) é exatamente o que `SBRT_ENABLE_BOCPD=1`
+    # liga acima (C6).
+    return blocks
 
 
 class StreamScorer:

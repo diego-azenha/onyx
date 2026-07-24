@@ -212,6 +212,16 @@ Ordem que evita gastar horas em nada:
 OOF de 10.000; muito menor ainda na **diferença pareada**. Um Δ de 0,004 é irresolvível no held-out
 de 100 séries e resolvível no OOF pareado — não confunda os dois instrumentos.
 
+**9. Replicar na OUTRA PARTIÇÃO DE FOLDS antes de acreditar em qualquer efeito de ~0,003**
+(`HISTORICO.md` §14.2). Trocar `cfg.seed` 42→43, com tudo o mais igual, move a TS-AUC em **~0,007** —
+7× a variância de semente de boosting e 5× a barra. A partição 42 é a **sortuda** (X1-soft: 0,6102 em
+42, 0,6029 em 43). O bootstrap pareado do R0 **não** vê essa fonte: ele reamostra séries dentro de uma
+partição fixa, então um IC que exclui 0 continua condicionado à partição em que foi medido. Rodar
+`scripts/train.py --fold-seed 43` para o braço e comparar contra o baseline da mesma partição custa
+~40 min e já derrubou um braço inteiro que parecia ter IC limpo (a costura C5, §14.3): o perfil por
+bucket que a motivava **trocou de sinal** entre partições. Vale sobretudo quando a decisão se apoia em
+UM bucket.
+
 **Onde a métrica realmente paga** (medido 2026-07-21, `docs/BACKLOG_TSAUC.md`):
 
 | bucket | peso | TS-AUC |
@@ -309,8 +319,18 @@ séries e 0,8098 num subconjunto de 500. Não existe piloto barato por amostrage
    (`HISTORICO.md` §9). O que restou é um **experimento**, não uma pendência: o V5 juntou BOCPD com a
    poda de L-momentos/`dep_w050`, então o efeito isolado do BOCPD segue não medido — rodar
    V4 + BOCPD (~190 features) responderia.
-2. **Não existe log de submissões oficiais** (`artifacts/reports/submission_log.md` está previsto no
-   plano e ausente). A âncora oficial (cláusula 3 de §9.0) nunca foi exercida de forma registrada.
+2. ~~**Não existe log de submissões oficiais**~~ **CRIADO (2026-07-24):**
+   `artifacts/reports/submission_log.md` com a âncora `5e42ff5` (board 0,6201 / OOF 0,6100). Registrar o
+   par (OOF, placar) a cada submissão; o mapa OOF↔placar segue com um ponto só.
+
+   **X1 ligado (2026-07-24, `HISTORICO.md` §13).** `configs/default.yaml:weights.detectability_mode: soft`
+   pondera os positivos por detectabilidade (+0,0040 OOF, IC exclui 0). O **caminho de submissão**
+   (`adapter/platform.py` → notebook) computa o mapa `d_i` **inline** (`model/detectability.py`,
+   bit-idêntico ao `detectability.csv`: max|Δ|=3,6e-15) — não depende de artefato local. O **offline**
+   `scripts/train.py` mantém `--detectability-mode none` por default (para não exigir `detectability.csv`
+   no `make train`/`run_all`); passe `--detectability-mode soft` para reproduzir X1 offline (lê o CSV do
+   F0.b). Desligar em produção: `weights.detectability_mode: none`. Só afeta o TREINO; inferência e
+   latência intocadas. Notebook regenerado e verificado bit-a-bit.
 3. **`drift_slope_abs_max = 1e-4`** reprova T2/T6/T10/T12/T12b por slopes da ordem de −0,0003 a
    −0,0008. Provavelmente limiar apertado demais, não falha real — mas recalibrar é decisão de tuning
    com validação própria.
@@ -335,6 +355,18 @@ séries e 0,8098 num subconjunto de 500. Não existe piloto barato por amostrage
   janela curta ou de transporte de escala do nulo (`state/calibration.py:_null_at`).
 - **`ts_auc_by_t` como critério de early stopping regride** (winner's curse com n efetivo ~10⁴). O
   default correto é `logloss`; ambas as métricas são computadas e registradas, só a que decide muda.
+- **Objetivo CUSTOM muda o que o `feval` recebe.** Com o objetivo embutido `binary` o LightGBM entrega
+  ao `feval` a **probabilidade**; com `params["objective"] = <callable>` ele entrega o **score bruto**.
+  Quem escrever um braço de objetivo custom tem de passar `raw_to_prob=True` a `_make_fold_feval`, ou
+  o `binary_logloss_diag` trata score bruto como probabilidade (medido: **5,20** contra 0,66 do
+  incumbente) — e, como a parada antecipada lê justamente essa métrica, **ela passa a rodar num sinal
+  sem sentido**. A `ts_auc` é imune (a sigmoide é monótona, a AUC não muda), o que é útil: dá um
+  veredicto independente da regra de parada mesmo com a logloss quebrada (`HISTORICO.md` §14.6).
+- **Neste ambiente, wrappers de job em background são mortos no meio** (~5–35 min, sem padrão claro;
+  não é suspensão da máquina — foi verificado que não houve sleep). O trabalho real sobrevive se for
+  destacado: `nohup <cmd> > log 2>&1 &` e depois acompanhar o log/artefatos. Scripts de campanha devem
+  ser **resumíveis** (pular a semente cujo diretório já existe), para que um kill custe no máximo uma
+  semente — ver `scripts/run_partb_b6.sh` e `scripts/run_c6_bocpd.sh`.
 - **Ablação de fold único não prevê o ciclo completo.** Já custou uma rodada inteira.
 - Treino do braço rank: ~16 min (5 folds). Suíte de robustez com 200 seeds: perto de uma hora.
 
@@ -368,6 +400,20 @@ séries e 0,8098 num subconjunto de 500. Não existe piloto barato por amostrage
 - `data/processed/train_rows.parquet` — dataset de treino (git-ignored, ~650–750 MB, regenerável).
 
 `data/` e `artifacts/` **nunca** vão para o git; são regeneráveis por `make dataset` / `make train`.
+
+**Armadilha de baseline — quatro números quase iguais, um contaminado** (`HISTORICO.md` §14.8):
+
+| número | artefato | o que é |
+|---|---|---|
+| 0,6018 | — | média das TS-AUC **individuais** das 4 sementes limpas |
+| **0,6062** | **`oof_x0_a_bag4`** | **bag das 4 sementes limpas — o baseline CORRETO** (o bagging vale +0,0044) |
+| 0,6084 | `oof_b183_bag4` | média de **(42, 101, 202, 777)** — **contém a semente 42**, lê +0,0022 alto |
+| 0,6100 | `oof_b183_s42` | semente 42 sozinha — o "0,6100 histórico", contaminado por seleção |
+
+**Não use `oof_b183_bag4` como baseline** apesar do nome sugerir "o V4 de 183 features": o +0,0040 do
+X1 está medido contra `oof_x0_a_bag4`; contra o b183 o mesmo braço mediria +0,0018. Incumbente atual
+para braços novos: **`oof_x1_soft_bag4` = 0,6102** (partição 42) e **`oof_c3_partB_bag4` = 0,6029**
+(partição 43).
 
 ---
 

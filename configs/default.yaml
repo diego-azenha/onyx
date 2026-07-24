@@ -286,6 +286,16 @@ gates:                                  # plano §10 (tabela revisada) e §11.1 
 submission:                             # plano §9.3 — G-0/G-mono/G-peso decididos por submissão oficial,
   log_path: "artifacts/reports/submission_log.md"   # nunca por número calculado localmente
 
+weights:                               # X1 (BRAINSTORM_RUPTURA_TSAUC.md §3): supervisão ponderada por
+  detectability_mode: soft             # detectabilidade. MEDIDO 2026-07-24, K=4 vs V4 (baseline OOF
+  detect_floor: 0.3                    # 0,6018): soft +0,0040 [+0,0005, +0,0073] IC exclui 0; hard
+                                       # +0,0036 [+0,0004, +0,0071]. Ganho nos buckets 50<t≤150 (+0,008)
+                                       # e 150<t≤400 (+0,004). Contra a barra recalibrada ~0,0014 (o
+                                       # 0,0058 histórico era artefato da semente 42), é ~2,5×. O peso do
+                                       # positivo vira w×=clip(d_i/q95, 0.3, 1), d_i = detectabilidade
+                                       # do censo A1 computada inline (model/detectability.py); só afeta
+                                       # séries de quebra precoce (0<τ<50), as demais ficam com peso 1.
+
 postprocess:
   mode: free                           # free | hold | soft | ema — plano §7
   soft_decay: 0.02

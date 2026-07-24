@@ -6,6 +6,7 @@ salvo num diretório separado. Compare o OOF resultante contra o binário com sc
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -21,10 +22,16 @@ def main() -> None:
     parser.add_argument("--rows", default="data/processed/train_rows.parquet")
     parser.add_argument("--out", default="artifacts/models/v1_rank")
     parser.add_argument("--oof-out", default=None, help="default: <out>/../oof_<basename(out)>.parquet")
+    parser.add_argument("--drop-prefix", nargs="*", default=[], metavar="PREFIXO")
+    parser.add_argument("--boost-seed", type=int, default=None)
     args = parser.parse_args()
 
     cfg = load_config(args.config)
+    if args.boost_seed is not None:
+        cfg = replace(cfg, lightgbm=replace(cfg.lightgbm, boost_seed=args.boost_seed))
     rows = pd.read_parquet(args.rows)
+    if args.drop_prefix:
+        rows = rows.drop(columns=[c for c in rows.columns if c.startswith(tuple(args.drop_prefix))])
     ensemble, oof_pred = train_rank(rows, cfg, progress=True)
     ensemble.save(args.out)
     print(f"ensemble (rank) salvo em {args.out} ({len(ensemble.boosters)} folds, {len(ensemble.feature_order)} features)")

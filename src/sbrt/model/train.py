@@ -85,6 +85,45 @@ def _make_fold_feval(
     return _feval
 
 
+def _make_pairwise_fobj(t_valid_full, y_full, w_row, w_t, alpha, n_pairs, seed):
+    """B4 (BRAINSTORM_RUPTURA_V2.md §1.5): objetivo custom = (1−α)·logloss + α·pairwise intra-t.
+    Pares (pos,neg) do MESMO grupo t, pré-amostrados uma vez (P por positivo, t-casados), peso w_t, SEM
+    desconto de posição e SEM truncation. Vetorizado por `bincount` (sem laço por t por iteração).
+    Pares do mesmo t compartilham o init_score da taxa-base ⇒ o termo pairwise é cego a f(t) de graça.
+    Retorna grad/hess já com todos os pesos embutidos (o Dataset entra com weight=1)."""
+    rng = np.random.default_rng(seed)
+    n = len(y_full)
+    # Amostragem t-a-t (nao positivo-a-positivo): um unico groupby resolve os indices de cada
+    # (t, y), e cada grupo sorteia de uma vez os len(pos_t)*n_pairs negativos. Equivalente ao
+    # sorteio por positivo, mas ~399 iteracoes em vez de ~500k (o pre-sorteio roda por fold).
+    idx_by = pd.DataFrame({"t": t_valid_full, "y": y_full}).groupby(["t", "y"]).indices
+    pos_arr, neg_arr, wt_pair = [], [], []
+    for t in np.unique(t_valid_full):
+        p_idx = idx_by.get((t, 1))
+        n_idx = idx_by.get((t, 0))
+        if p_idx is None or n_idx is None or len(p_idx) == 0 or len(n_idx) == 0:
+            continue
+        reps = np.repeat(p_idx, n_pairs)
+        picks = n_idx[rng.integers(0, len(n_idx), size=len(reps))]
+        pos_arr.append(reps); neg_arr.append(picks)
+        wt_pair.append(np.full(len(reps), w_t.get(int(t), 1.0)))
+    pa = np.concatenate(pos_arr); na = np.concatenate(neg_arr); wp = np.concatenate(wt_pair)
+    wp = wp / max(wp.mean(), 1e-12)
+
+    def _fobj(preds, _dataset):
+        p = 1.0 / (1.0 + np.exp(-preds))
+        g = (1.0 - alpha) * w_row * (p - y_full)
+        h = (1.0 - alpha) * w_row * np.maximum(p * (1.0 - p), 1e-6)
+        d = preds[pa] - preds[na]
+        sig = 1.0 / (1.0 + np.exp(-d))
+        c = (1.0 - sig) * wp        # dL/ds_pos = −(1−σ); dL/ds_neg = +(1−σ)
+        hh = sig * (1.0 - sig) * wp
+        g += alpha * (np.bincount(pa, weights=-c, minlength=n) + np.bincount(na, weights=c, minlength=n))
+        h += alpha * (np.bincount(pa, weights=hh, minlength=n) + np.bincount(na, weights=hh, minlength=n))
+        return g, h
+    return _fobj
+
+
 def train(rows: pd.DataFrame, weights: np.ndarray, cfg, progress: bool = True) -> tuple:
     """tqdm sobre os 5 folds; dentro de cada fold, LightGBM usa seu próprio log verbose (não
     duplicar barra de progresso, plano §8 regra tqdm). Retorna (ModelEnsemble, oof_pred) — oof_pred
@@ -124,16 +163,37 @@ def train(rows: pd.DataFrame, weights: np.ndarray, cfg, progress: bool = True) -
         verbose=-1,
     )
 
+    # B5/B6 (BRAINSTORM_RUPTURA_V2.md §2.5/§2.6): regularização estrutural alinhada a `feature_cols`.
+    # Gated por cfg (off por default); só o braço binário os liga. Ver scripts/train.py.
+    if getattr(lgb_cfg, "monotone_llr", False):
+        _MONO = ("cusum_mean_pos", "cusum_var_up", "conformal_logm_abs_reset", "bayes_lo")
+        params["monotone_constraints"] = [1 if c.startswith(_MONO) else 0 for c in feature_cols]
+    if getattr(lgb_cfg, "feature_contri_meta", 1.0) != 1.0:
+        params["feature_contri"] = [
+            lgb_cfg.feature_contri_meta if c.startswith("meta_h0") else 1.0 for c in feature_cols
+        ]
+
     boosters = []
     fold_evals = []
     oof_pred = np.full(len(rows), np.nan, dtype=np.float64)
     folds = list(grouped_stratified_kfold(rows, lgb_cfg.n_folds, cfg.seed))
     fold_iter = tqdm(folds, desc="treinando folds") if progress else folds
 
+    use_pairwise = getattr(lgb_cfg, "pairwise_alpha", 0.0) > 0.0
     for train_idx, valid_idx in fold_iter:
-        dtrain = lgb.Dataset(
-            X[train_idx], label=y[train_idx], weight=weights[train_idx], init_score=init_score_full[train_idx]
-        )
+        params_use = params
+        if use_pairwise:
+            ytr = y[train_idx]; ttr = t_values[train_idx].astype(np.int64)
+            gt = pd.DataFrame({"t": ttr, "y": ytr}).groupby("t")["y"]
+            w_t = {int(t): float((s == 1).sum() * (s == 0).sum()) for t, s in gt}
+            fobj = _make_pairwise_fobj(ttr, ytr, weights[train_idx].astype(np.float64), w_t,
+                                       lgb_cfg.pairwise_alpha, lgb_cfg.pairwise_pairs, cfg.seed)
+            dtrain = lgb.Dataset(X[train_idx], label=ytr, init_score=init_score_full[train_idx])  # weight embutido no fobj
+            params_use = {**params, "objective": fobj}  # objetivo custom substitui "binary"
+        else:
+            dtrain = lgb.Dataset(
+                X[train_idx], label=y[train_idx], weight=weights[train_idx], init_score=init_score_full[train_idx]
+            )
         dvalid = lgb.Dataset(
             X[valid_idx],
             label=y[valid_idx],
@@ -143,11 +203,17 @@ def train(rows: pd.DataFrame, weights: np.ndarray, cfg, progress: bool = True) -
         )
         feval = _make_fold_feval(
             t_values[valid_idx], lgb_cfg.feval_max_valid_rows, cfg.seed,
+            # Com o objetivo BUILT-IN "binary" o LightGBM ja entrega `preds` como probabilidade ao
+            # feval; com objetivo CUSTOM (B4) ele entrega o SCORE BRUTO. Sem esta sigmoide o
+            # `binary_logloss_diag` do braco pairwise trata score bruto como probabilidade (medido:
+            # 5,3 contra 0,66 do incumbente) e, como a parada le justamente essa metrica
+            # (early_stopping_metric=logloss), a parada antecipada rodaria num sinal sem sentido.
+            raw_to_prob=use_pairwise,
             stopping_metric=lgb_cfg.early_stopping_metric,
         )
         evals_result: dict = {}
         booster = lgb.train(
-            params,
+            params_use,
             dtrain,
             num_boost_round=lgb_cfg.n_estimators_cap,
             valid_sets=[dvalid],
@@ -233,6 +299,16 @@ def train_rank(rows: pd.DataFrame, cfg, progress: bool = True) -> tuple:
         verbose=-1,
     )
 
+    # B5/B6 (BRAINSTORM_RUPTURA_V2.md §2.5/§2.6): regularização estrutural alinhada a `feature_cols`.
+    # Gated por cfg (off por default); só o braço binário os liga. Ver scripts/train.py.
+    if getattr(lgb_cfg, "monotone_llr", False):
+        _MONO = ("cusum_mean_pos", "cusum_var_up", "conformal_logm_abs_reset", "bayes_lo")
+        params["monotone_constraints"] = [1 if c.startswith(_MONO) else 0 for c in feature_cols]
+    if getattr(lgb_cfg, "feature_contri_meta", 1.0) != 1.0:
+        params["feature_contri"] = [
+            lgb_cfg.feature_contri_meta if c.startswith("meta_h0") else 1.0 for c in feature_cols
+        ]
+
     boosters = []
     fold_evals = []
     oof_pred = np.full(len(rows), np.nan, dtype=np.float64)
@@ -258,6 +334,7 @@ def train_rank(rows: pd.DataFrame, cfg, progress: bool = True) -> tuple:
         # por tratabilidade computacional.
         truncation_level = min(int(train_group.max()), rank_cfg.truncation_level_cap)
         params = dict(base_params, lambdarank_truncation_level=truncation_level)
+        params_use = params  # o braço de ranking não usa o objetivo pairwise (B4 é só binário)
 
         dtrain = lgb.Dataset(
             X_full[train_sorted], label=y_full[train_sorted], weight=thin_w[train_sorted], group=train_group
@@ -275,7 +352,7 @@ def train_rank(rows: pd.DataFrame, cfg, progress: bool = True) -> tuple:
         )
         evals_result: dict = {}
         booster = lgb.train(
-            params,
+            params_use,
             dtrain,
             num_boost_round=lgb_cfg.n_estimators_cap,
             valid_sets=[dvalid],

@@ -38,6 +38,7 @@ def train(
     if cfg.model.mode == "supervised":
         from sbrt.model.dataset import SeriesRecord, build_training_rows
         from sbrt.model.weights import compute_row_weights
+        from sbrt.model.detectability import compute_detectability_map
         from sbrt.model.fuse import fuse_boosters
         from sbrt.model.train import train as train_ensemble
 
@@ -51,7 +52,20 @@ def train(
             for dataset_id, x_hist, x_online, tau_index in datasets
         ]
         rows = build_training_rows(records, cfg, n_jobs=cfg.model.dataset_n_jobs)
-        weights = compute_row_weights(rows, cfg)
+
+        # X1 (adotado 2026-07-24): supervisão ponderada por detectabilidade. A nuvem treina do zero e
+        # NÃO tem o detectability.csv local, então o mapa d_i é computado INLINE dos próprios registros
+        # (model/detectability.py, mesma matemática do censo A1 + F0.b). Só afeta o TREINO -- inferência
+        # inalterada. Ver docs/HISTORICO.md e configs/default.yaml:weights.
+        det_map = None
+        if cfg.weights.detectability_mode != "none":
+            det_map = compute_detectability_map(records, cfg, n_jobs=cfg.model.dataset_n_jobs)
+        weights = compute_row_weights(
+            rows, cfg,
+            detectability_mode=cfg.weights.detectability_mode,
+            detectability=det_map,
+            detect_floor=cfg.weights.detect_floor,
+        )
 
         # BAGGING DE SEMENTES (2026-07-22). A nuvem TREINA DO ZERO -- `resources/` nao e usado aqui --
         # entao o bagging tem de acontecer neste laco, ou a submissao perde os +0,0048 medidos.

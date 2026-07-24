@@ -274,6 +274,15 @@ class LightGBMConfig:
     # pareado por série não enxerga. Ver src/sbrt/model/train.py.
     feval_max_valid_rows: int | None = None  # R2 (parecer §6-R2): subamostra determinística do fold
     # de validação usada pelo feval de AUC-por-passo a cada rodada de boosting; None = fold inteiro.
+    pairwise_alpha: float = 0.0  # B4 (BRAINSTORM_RUPTURA_V2.md §1.5): peso do termo pairwise intra-t no
+    # objetivo custom (grad=(1−α)·logloss+α·pairwise). 0 = objetivo binário normal.
+    pairwise_pairs: int = 1      # B4: nº de negativos amostrados por positivo (t-casados).
+    monotone_llr: bool = False  # B5 (BRAINSTORM_RUPTURA_V2.md §2.5): monotone_constraints=+1 nos
+    # acumuladores de evidência (cusum_*_pos, cusum_var_up, conformal_logm_abs_reset, bayes_lo*) --
+    # P(quebra≤t) deve ser não-decrescente em cada LLR. Regularização estrutural contra interações
+    # espúrias com efeitos-fixos quando n_eff~10^4.
+    feature_contri_meta: float = 1.0  # B6 (§2.6): multiplicador de ganho de split das colunas meta_h0_*
+    # (0,5-0,7 empurra a árvore a usá-las como condicionador, não intercepto por série). 1.0 = desligado.
     early_stopping_metric: str = "logloss"  # "logloss" ou "ts_auc_by_t" -- qual das duas métricas do
     # feval (model/train.py:_make_fold_feval) governa a parada via first_metric_only. MEDIDO
     # (retreino real, 2026-07-20): "ts_auc_by_t" sozinho treina 100-236 rodadas (vs. 61-89 com
@@ -323,6 +332,20 @@ class PostprocessConfig:
     mode: str
     soft_decay: float
     ema_alpha: float
+    ema_up_alpha: float = 0.7    # A1: EWMA assimétrico -- α da subida (rápido)
+    ema_down_alpha: float = 0.1  # A1: α da descida (lento). ema_up >= ema_down. Só ativo se mode='ema_asym'.
+
+
+@dataclass(frozen=True)
+class WeightsConfig:
+    # X1 (BRAINSTORM_RUPTURA_TSAUC.md §3): pondera os POSITIVOS por detectabilidade (o professor tira
+    # peso de positivos que não carregam sinal no passo em que pesam). MEDIDO 2026-07-24, K=4 vs. V4:
+    # soft +0,0040 [+0,0005, +0,0073] (IC exclui 0), hard +0,0036 [+0,0004, +0,0071]. Ganho concentrado
+    # em 50<t≤150 e 150<t≤400 (os buckets de maior peso). detectabilidade = norma L2 dos eixos do censo
+    # A1 (delta_logvar_e/rho1/kurt/exceed) × √m_bucket, computada INLINE no treino (model/detectability.py).
+    detectability_mode: str = "none"     # none|hard|soft|ramp -- 'soft' é a variante adotada
+    detect_floor: float = 0.3            # piso do multiplicador suave: w_pos ×= clip(d/q95, floor, 1)
+    wt_align: bool = False               # B1/F3: alinhar massa de peso por t com w_t=n_pos·n_neg (braço)
 
 
 @dataclass(frozen=True)
@@ -357,6 +380,7 @@ class Config:
     gates: GatesConfig
     submission: SubmissionConfig
     postprocess: PostprocessConfig
+    weights: WeightsConfig = WeightsConfig()
 
 
 def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
@@ -401,4 +425,5 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         ),
         submission=SubmissionConfig(**raw["submission"]),
         postprocess=PostprocessConfig(**raw["postprocess"]),
+        weights=WeightsConfig(**raw.get("weights", {})),
     )
