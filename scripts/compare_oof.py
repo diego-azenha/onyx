@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 
-from sbrt.evaluation.ts_auc import weighted_ts_auc
+from sbrt.evaluation.ts_auc import board_grid_multipliers, weighted_ts_auc
 
 T_BUCKET_EDGES = [0, 50, 150, 400, np.inf]
 T_BUCKET_LABELS = ["t<=50", "50<t<=150", "150<t<=400", "t>400"]
@@ -32,12 +32,13 @@ def _bucket_of(t: np.ndarray) -> np.ndarray:
     return np.array(T_BUCKET_LABELS, dtype=object)[idx.astype(int)]
 
 
-def _point_estimate(t, y, s_base, s_cand, bucket) -> dict:
-    out = {"overall": weighted_ts_auc(t, y, s_cand) - weighted_ts_auc(t, y, s_base)}
+def _point_estimate(t, y, s_base, s_cand, bucket, w_mult=None) -> dict:
+    out = {"overall": weighted_ts_auc(t, y, s_cand, w_mult) - weighted_ts_auc(t, y, s_base, w_mult)}
     for label in T_BUCKET_LABELS:
         mask = bucket == label
         out[label] = (
-            weighted_ts_auc(t[mask], y[mask], s_cand[mask]) - weighted_ts_auc(t[mask], y[mask], s_base[mask])
+            weighted_ts_auc(t[mask], y[mask], s_cand[mask], w_mult)
+            - weighted_ts_auc(t[mask], y[mask], s_base[mask], w_mult)
             if mask.any()
             else float("nan")
         )
@@ -45,12 +46,12 @@ def _point_estimate(t, y, s_base, s_cand, bucket) -> dict:
 
 
 def _one_bootstrap_rep(
-    seed: int, id_to_pos: dict, sampled_id_order: np.ndarray, t, y, s_base, s_cand, bucket
+    seed: int, id_to_pos: dict, sampled_id_order: np.ndarray, t, y, s_base, s_cand, bucket, w_mult=None
 ) -> dict:
     rng = np.random.default_rng(seed)
     sampled_ids = rng.choice(sampled_id_order, size=len(sampled_id_order), replace=True)
     idx = np.concatenate([id_to_pos[i] for i in sampled_ids])
-    return _point_estimate(t[idx], y[idx], s_base[idx], s_cand[idx], bucket[idx])
+    return _point_estimate(t[idx], y[idx], s_base[idx], s_cand[idx], bucket[idx], w_mult)
 
 
 def paired_bootstrap_compare(
@@ -61,6 +62,7 @@ def paired_bootstrap_compare(
     seed: int = 42,
     alpha: float = 0.05,
     n_jobs: int = -1,
+    w_mult: dict[int, float] | None = None,
 ) -> dict:
     t = merged["t"].to_numpy(dtype=np.int64)
     y = merged["y"].to_numpy(dtype=np.int64)
@@ -68,7 +70,7 @@ def paired_bootstrap_compare(
     s_cand = merged[score_col_cand].to_numpy(dtype=np.float64)
     bucket = _bucket_of(t)
 
-    point = _point_estimate(t, y, s_base, s_cand, bucket)
+    point = _point_estimate(t, y, s_base, s_cand, bucket, w_mult)
 
     id_to_pos = merged.groupby("id").indices
     unique_ids = np.array(sorted(id_to_pos.keys()))
@@ -77,7 +79,7 @@ def paired_bootstrap_compare(
     rep_seeds = rng_master.integers(0, 2**31 - 1, size=n_boot)
 
     reps = Parallel(n_jobs=n_jobs)(
-        delayed(_one_bootstrap_rep)(int(s), id_to_pos, unique_ids, t, y, s_base, s_cand, bucket)
+        delayed(_one_bootstrap_rep)(int(s), id_to_pos, unique_ids, t, y, s_base, s_cand, bucket, w_mult)
         for s in rep_seeds
     )
 
@@ -115,6 +117,14 @@ def main() -> None:
     parser.add_argument("--n-jobs", type=int, default=-1)
     parser.add_argument("--target-bucket", default=None, choices=T_BUCKET_LABELS,
                          help="bucket declarado a priori para a regra de decisão (opcional)")
+    parser.add_argument("--grid", default="full", choices=["full", "thin"],
+                         help="A2 (CAMPANHA_POLIMENTO.md): 'full' pondera cada passo do OOF pela massa "
+                              "que o BOARD da ao bloco que ele representa (o OOF vive na grade com "
+                              "thinning, o board avalia todos os passos). MEDIDO: trocar de grade move a "
+                              "TS-AUC agregada em +0,0139 e o peso de t>400 de 16,5%% para 31,9%%. "
+                              "'thin' reproduz a ponderacao historica -- so para reauditar numeros antigos.")
+    parser.add_argument("--y-train", default="data/y_train.parquet",
+                         help="fonte dos w_t da grade cheia (--grid full)")
     parser.add_argument("--out", default=None, help="caminho opcional para salvar o resultado em JSON")
     args = parser.parse_args()
 
@@ -141,10 +151,24 @@ def main() -> None:
             "candidato nao casaram em (id,t) e foram descartadas do par."
         )
 
+    w_mult = None
+    if args.grid == "full":
+        w_mult = board_grid_multipliers(args.y_train, merged["t"].to_numpy())
+        print(f"[compare_oof] grade do BOARD: {len(w_mult)} passos do OOF reponderados "
+              f"(multiplicador {min(w_mult.values()):.2f}-{max(w_mult.values()):.2f})")
+
+    t_all = merged["t"].to_numpy(dtype=np.int64)
+    y_all = merged["y"].to_numpy(dtype=np.int64)
+    lvl_base = weighted_ts_auc(t_all, y_all, merged["score_base"].to_numpy(dtype=np.float64), w_mult)
+    lvl_cand = weighted_ts_auc(t_all, y_all, merged["score_cand"].to_numpy(dtype=np.float64), w_mult)
+    print(f"[compare_oof] TS-AUC (grade={args.grid})  baseline={lvl_base:.4f}  candidato={lvl_cand:.4f}")
+
     result = paired_bootstrap_compare(
         merged, "score_base", "score_cand", n_boot=args.n_boot, seed=args.seed,
-        alpha=args.alpha, n_jobs=args.n_jobs,
+        alpha=args.alpha, n_jobs=args.n_jobs, w_mult=w_mult,
     )
+    result["_meta"] = {"grid": args.grid, "ts_auc_baseline": lvl_base, "ts_auc_candidate": lvl_cand,
+                       "baseline": args.baseline, "candidate": args.candidate}
 
     print(f"\nDelta-TS-AUC (candidato - baseline), {len(merged)} linhas pareadas, "
           f"{merged['id'].nunique()} series, n_boot={args.n_boot}, IC {100 * (1 - args.alpha):.0f}%\n")

@@ -28,7 +28,7 @@ Documento autocontido para handoff a um agente externo. Continuação de `RELATO
 | T0.1 | diagnóstico de pares difíceis | — | perda **difusa** (5% piores = 16% da massa) | sem alvo concentrado |
 | T0.2 | rank-average de sementes homogêneas | ✗ ~0 | −0,0001 | eixo fechado |
 | A2 | stacking heterogêneo | ✗ bloqueado pelo ambiente | lambdarank >15 min sem saída | reabrir só com mais compute |
-| C6 | BOCPD isolado sobre o V4 | *(preenchido em §3.C6)* | — | — |
+| **C6** | BOCPD isolado sobre o V4 (187 feat) | ~ passa a regra sozinho, **NÃO adotado** | sozinho: geral +0,0020 [−0,0010; +0,0048] · **em cima do B6: +0,0014 [−0,0008; +0,0033], e t>400 vai a +0,0000** | **fica de fora** (§3.C6) |
 | C4 | varredura de hiperparâmetros | **não rodado** (decisão do usuário) | — | ver §7 |
 
 ---
@@ -104,9 +104,41 @@ Como a `ts_auc` é invariante à sigmoide, ela nunca foi afetada — o que deu u
 - **T0.2**: rank-average de 4 sementes **homogêneas** dá −0,0001 (Jensen sobre membros quase idênticos ≈ 0). Combinador reutilizável em `scripts/rank_avg_oof.py`.
 - **A2**: bloqueado pelo ambiente (lambdarank >15 min sem saída; membro historicamente fraco ~0,585 vs 0,610).
 
-### C6 — BOCPD isolado sobre o V4
+### C6 — BOCPD isolado sobre o V4 · **passa a regra formal, NÃO adotado**
 
-*(Preenchido quando o braço terminar — build do dataset com `SBRT_ENABLE_BOCPD=1` + K=4. Ver §3.C6 na versão final.)*
+**O experimento que faltava desde o V5.** O BOCPD entrou no projeto *dentro* do V5, junto com a poda de L-momentos e de `dep_*_w050`. O V5 regrediu como pacote e foi revertido, mas os dois componentes tinham medido positivo **separados** (poda +0,0027, BOCPD +0,0029) — na régua velha. O experimento que separa as duas mudanças (**V4 + BOCPD, sem a poda**) estava registrado como "nunca rodado" desde 22/07. Rodou.
+
+**Como.** `SBRT_ENABLE_BOCPD=1` acrescenta o `BOCPDBlock` ao `default_blocks()` — opt-in, o default de produção fica byte-a-byte igual (verificado). 4 colunas `bocpd_*` ⇒ **187 features**. A build nova reproduz as 183 colunas compartilhadas **bit-a-bit** contra `train_rows_3eixos.parquet` (max|diff| = 0, padrão de NaN idêntico), então o ganho é do BOCPD e não de deriva de build.
+
+**Resultado.** 0,6102 → **0,6121**.
+
+| bucket | Δ | IC 95% | exclui 0 |
+|---|---|---|---|
+| geral | +0,0020 | [−0,0010; +0,0048] | não |
+| **150–400** (alvo) | **+0,0041** | **[+0,0007; +0,0072]** | **sim** |
+| t>400 | +0,0015 | [−0,0014; +0,0040] | não |
+| 50–150 | −0,0004 | [−0,0057; +0,0043] | não |
+| t≤50 | −0,0019 | [−0,0102; +0,0057] | não |
+
+**Por que não adotar já**, mesmo passando a regra do R0 pelo bucket-alvo:
+
+1. O bucket-alvo `150–400` é o **default recomendado** do `NOTAS_AGENTES.md` §5 (49% do peso), declarado antes de ver o perfil — mas não é uma previsão mecanicista sobre *este* braço.
+2. **É partição 42 (a sortuda) apenas.** É exatamente a situação do B6 antes da réplica — e o B6 sobreviveu, a costura C5 não. Réplica: ~40 min.
+3. **Implantação mais cara que a do B6:** muda o conjunto de features (não é um knob) — exige `BOCPDBlock` no `default_blocks()` de produção, novo `feature_schema`, ~30 µs/passo (folga no gate de 1500, mas não é zero).
+
+**E não se pode assumir que soma com o B6** — então foi medido. **B6+C6 = 0,6139**, contra B6 sozinho 0,6125:
+
+| bucket | conjunto − B6 sozinho | IC 95% | exclui 0 |
+|---|---|---|---|
+| geral | **+0,0014** | [−0,0008; +0,0033] | **não** |
+| 150–400 | +0,0027 | [+0,0004; +0,0051] | sim |
+| **t>400** | **+0,0000** | [−0,0023; +0,0024] | não |
+| 50–150 | +0,0005 | [−0,0033; +0,0044] | não |
+| t≤50 | −0,0012 | [−0,0084; +0,0051] | não |
+
+Aditividade **parcial**: a soma ingênua previa 0,6145, o medido é 0,6139 (~70% do efeito isolado do C6 sobrevive). Melhor que o V5 (que regrediu de vez), mas o Δ marginal raspa a barra e o IC agregado inclui 0. A linha decisiva é **t>400 = +0,0000**: o ganho isolado do C6 ali (+0,0015) **desaparece** em cima do B6 — o B6 já captura aquilo. Sobra **um bucket só**.
+
+**Decisão: C6 fica de fora.** Mudança de conjunto de features + `feature_schema` + ~30 µs/passo em troca de um efeito que raspa a barra, some no agregado e vive num bucket, medido só na partição sortuda. Preço de reabertura: réplica em `--fold-seed 43`.
 
 ---
 
@@ -168,6 +200,7 @@ lightgbm:
 
 1. **Aplicar o B6** em `configs/default.yaml` + regenerar e verificar o notebook de submissão.
 2. **Submissão oficial** do V4+X1-soft+B6 — o mapa OOF↔placar continua desconhecido (um ponto só: `5e42ff5` marcou 0,6201 no placar contra 0,6100 de OOF).
-3. **Replicar na partição 43** qualquer braço futuro antes de empacotar (§4).
-4. **Não reabrir:** studentização auto-referencial (§3.A3) e injeção sintética sem redesenho do portador (§3.C2).
-5. **Reabrível com mais compute:** A2 (stacking heterogêneo) e C4 (varredura de HP, harness já corrigido) — ambos de prioridade baixa: A2 depende de um membro fraco, e C4 caça efeitos na escala que o §4 mostrou ser ruído de partição.
+3. ~~Medir B6+C6 juntos~~ — **feito** (§3.C6): +0,0014 marginal, IC agregado inclui 0, `t>400` vai a zero. C6 fica de fora. Só vale reabrir com a réplica na partição 43 primeiro.
+4. **Replicar na partição 43** qualquer braço futuro antes de empacotar (§4).
+5. **Não reabrir:** studentização auto-referencial (§3.A3) e injeção sintética sem redesenho do portador (§3.C2).
+6. **Reabrível com mais compute:** A2 (stacking heterogêneo) e C4 (varredura de HP, harness já corrigido) — ambos de prioridade baixa: A2 depende de um membro fraco, e C4 caça efeitos na escala que o §4 mostrou ser ruído de partição.

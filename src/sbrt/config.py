@@ -19,6 +19,9 @@ class H0Config:
     nu_clip: tuple
     quantile_levels: tuple
     clip_e: tuple
+    null_clip_match: bool = False  # A6: aplicar `clip_e` também ao histórico usado pelo replay de
+    # calibração (state/calibration.py), para que o nulo de cada coluna `_cal` seja estimado na MESMA
+    # escala em que a produção calcula a estatística. Ver a nota medida em configs/default.yaml.
 
 
 @dataclass(frozen=True)
@@ -59,6 +62,8 @@ class BayesConfig:
 class ConformalConfig:
     epsilons: tuple
     reset_epsilons: tuple
+    use_raw: bool = False  # A6: ranquear `e_raw` (não o `e` clipado) contra o histórico, que também
+    # não é clipado. Ver a nota medida em configs/default.yaml e no topo de state/conformal.py.
 
 
 @dataclass(frozen=True)
@@ -292,6 +297,33 @@ class LightGBMConfig:
     # usando o fold de validação inteiro no feval (sem subamostra). "logloss" (default) reproduz o
     # comportamento original, validado; "ts_auc_by_t" fica disponível para experimentação futura com
     # estabilização adicional (ex.: min_delta, suavização), não para uso direto.
+    base_rate_weighted: bool = False  # A3b (CAMPANHA_POLIMENTO.md, frente A): ajustar a curva de
+    # taxa-base (o `init_score`) sob os MESMOS pesos de linha usados no treino.
+    #
+    # A curva existe para tirar do modelo o componente puramente-f(t) do alvo (model/base_rate.py).
+    # Ela é ajustada em `p(t)` NÃO ponderado -- mas desde o R1 (model/weights.py) o treino usa pesos
+    # pareado-consistentes `w_pos(t) ∝ n_neg(t)`, `w_neg(t) ∝ n_pos(t)`, que EQUALIZAM as classes
+    # dentro de cada passo. MEDIDO (2026-07-25, sobre train_rows_bocpd): a taxa de positivos
+    # PONDERADA é 0,4947 em t=10 e 0,4996 em t=400 -- praticamente 0,5 em todo t>=10 -- enquanto o
+    # `init_score` injetado vale logit(0,0226) = -3,83 em t=10 e -0,79 em t=400. O descasamento chega
+    # a +3,81 em log-odds (média +1,22).
+    #
+    # Ou seja: o R1 invalidou a premissa do A2 e a curva deixou de remover um offset para passar a
+    # INJETAR um. É metricamente neutro no limite (invariância C1: é função só de t), mas o modelo
+    # gasta árvores desfazendo-o, e a logloss que governa a parada antecipada passa a ser dominada
+    # por essa correção de f(t) em vez do resíduo transversal que a métrica cobra -- o que é
+    # consistente com a parada disparar em 79-117 árvores.
+    #
+    # True = ajusta a curva com `weights`, o que a leva a ~logit(0,5)=0 e faz o `init_score` sumir.
+    linear_tree: bool = False  # D1 (CAMPANHA_POLIMENTO.md): modelo LINEAR por folha em vez de
+    # constante. O E0c mediu que o problema é essencialmente aditivo e suave (um toco `max_depth=1`
+    # recupera 99,4% do incumbente na grade de treino); folhas constantes aproximam curvas suaves com
+    # escadinhas, folhas lineares ajustam a curva. Custo: o LightGBM ignora `linear_tree` em `dart` e
+    # exige `num_leaves` moderado para não sobreajustar a regressão por folha.
+    enable_bundle: bool = True  # D5 (CAMPANHA_POLIMENTO.md): EFB do LightGBM. Com dezenas de
+    # colunas NaN-de-warmup o agrupamento exclusivo pode juntar features que nao sao mutuamente
+    # exclusivas de fato -- `false` desliga e testa isso. Default `true` = comportamento LightGBM.
+    dart: bool = False  # D3: `boosting=dart` (dropout entre árvores). Célula do sweep C4-mini.
 
 
 @dataclass(frozen=True)
@@ -334,6 +366,15 @@ class PostprocessConfig:
     ema_alpha: float
     ema_up_alpha: float = 0.7    # A1: EWMA assimétrico -- α da subida (rápido)
     ema_down_alpha: float = 0.1  # A1: α da descida (lento). ema_up >= ema_down. Só ativo se mode='ema_asym'.
+    min_t: float | None = None
+    """B3 (2026-07-25): gate de regime -- o pós-processo só se aplica em `t > min_t`; abaixo disso o
+    score passa intacto. `None` = sem gate (aplica em todo t).
+
+    Existe porque o A1 é um braço de t ALTO: ganha em `150<t<=400` e `t>400` e PERDE em `t<=50`. O
+    gate evita pagar esse pedágio. A recursão RECOMEÇA na primeira observação acima do corte, o que
+    reproduz exatamente a semântica offline de `scripts/apply_vema_oof.py --min-t` (que foi como o
+    +0,0009 foi medido nas duas partições). Sem o reinício, a produção herdaria o `prev` do regime
+    frio e divergiria da medição."""
 
 
 @dataclass(frozen=True)

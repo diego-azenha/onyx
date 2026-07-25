@@ -31,7 +31,7 @@ MODULES = [
     "state/accumulators.py", "state/cusum.py", "state/bayes_filter.py", "state/conformal.py",
     "state/rank_twosample.py", "state/mmd.py", "state/multiscale.py", "state/dependence.py",
     "state/lmoments.py", "state/varloc.py", "state/jumps.py", "state/fingerprint.py",
-    "state/multirep.py",
+    "state/multirep.py", "state/bocpd.py",
     "state/calibration.py", "state/h0.py", "postprocess/monotonicity.py", "model/fallback.py",
     "state/scorer.py", "model/base_rate.py", "model/predict.py", "model/fuse.py",
     "evaluation/splits.py",

@@ -28,14 +28,25 @@ def test_scorer_feature_order_stable_and_no_leakage_of_T(cfg):
     scorer = StreamScorer(h0, default_blocks(), None, cfg)
     feats = scorer.update_features(float(rng.randn()))
     assert "T" not in feats and "t_total" not in feats
-    # 189 = 183 do V4 + 6 do MultiRepBlock. ESTE NUMERO TEM DE CASAR COM
-    # `resources/feature_schema.json`: o scorer e o modelo empacotado sao um par, e um scorer que
-    # emite colunas diferentes das que o modelo espera quebra a submissao silenciosamente.
+    # 193 = 183 do V4 + 6 do MultiRepBlock + 4 do BOCPDBlock (C6, ligado em producao 2026-07-24).
+    #
+    # O QUE ESTE NUMERO GUARDA, corrigido em 2026-07-25 (A3 da campanha de polimento). A afirmacao
+    # antiga -- "tem de casar com `resources/feature_schema.json`, o scorer e o modelo empacotado sao
+    # um par" -- estava DESATUALIZADA: a submissao nao empacota modelo. O notebook embute o pipeline
+    # e a nuvem chama `adapter/platform.py:train()`, que treina do zero com o `default_blocks()`
+    # embutido; `resources/` e um artefato LOCAL, hoje com 189 colunas e sem consumidor no caminho de
+    # submissao (ver HISTORICO.md §15.3).
+    #
+    # O par que realmente importa e scorer <-> dataset de treino da MESMA execucao, e esse a nuvem
+    # garante por construcao. O que este numero guarda e outra coisa, e continua valendo: que ninguem
+    # mude `default_blocks()` sem perceber -- porque o conjunto implantado deixa de casar com aquele
+    # em que os bracos foram MEDIDOS. Foi exatamente isso que aconteceu: B6 (+0,0036) e C6 (+0,0014)
+    # foram medidos sobre 187 colunas (`--drop-prefix mrep_`) e aplicados a uma producao com 193.
     #
     # Medido com K sementes limpas por lado, empacotados: V4 0,6057 | +mrep 0,6120 | V5 0,6117 |
     # V5+mrep 0,6091. Os ganhos NAO somam -- juntar V5 e mrep piora -0,0024 contra o V5 sozinho,
-    # nas 3 sementes. Mexer neste numero exige R0 de K sementes E reempacotar `resources/`.
-    assert len(feats) == 189
+    # nas 3 sementes. Mexer neste numero exige R0 de K sementes.
+    assert len(feats) == 193
 
 
 def test_scorer_new_instance_per_series_gives_same_result_regardless_of_order(cfg):

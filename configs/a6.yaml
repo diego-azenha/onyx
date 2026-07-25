@@ -11,7 +11,7 @@ h0:                                    # plano §3.1
   nu_clip: [5.0, 50.0]
   quantile_levels: [0.01, 0.05, 0.10, 0.25, 0.75, 0.90, 0.95, 0.99]
   clip_e: [-8.0, 8.0]
-  null_clip_match: false              # A6 (CAMPANHA_POLIMENTO.md): aplicar `clip_e` também ao
+  null_clip_match: true              # A6 (CAMPANHA_POLIMENTO.md): aplicar `clip_e` também ao
                                       # histórico que alimenta o replay de calibração (F1). Hoje a
                                       # produção calcula cada estatística sobre `e` CLIPADO, mas o
                                       # nulo por série dela é estimado sobre `e_hist` NÃO clipado --
@@ -54,7 +54,7 @@ bayes:                                 # plano §4.3
 conformal:                            # plano §4.2 #23
   epsilons: [0.05, 0.1, 0.2, 0.4]
   reset_epsilons: [0.05, 0.1, 0.2, 0.4]
-  use_raw: false                      # A6 (CAMPANHA_POLIMENTO.md): ranquear `e_raw` em vez de `e`
+  use_raw: true                      # A6 (CAMPANHA_POLIMENTO.md): ranquear `e_raw` em vez de `e`
                                       # contra o histórico. O histórico de referência (`h0.e_hist`)
                                       # NÃO é clipado, mas o valor online chega clipado em
                                       # `h0.clip_e` = [-8,8] -- a comparação é assimétrica na cauda e
@@ -231,52 +231,10 @@ lightgbm:                              # plano §8.3
   n_estimators_cap: 1500
   early_stopping_rounds: 100
   max_bin: 255
-  linear_tree: true                    # *** DEPENDE DE `model/fuse.py` (leia antes de mexer) ***
-                                        # Folha linear = `leaf_const + Σ leaf_coeff_i · x_i`, e a
-                                        # fusão de boosters do caminho de PRODUÇÃO precisa escalar
-                                        # esses dois campos junto com `leaf_value`. Até 2026-07-25 ela
-                                        # escalava só o `leaf_value`: o fundido saía com erro de
-                                        # 1,1e+02 contra a média dos raws e o `train()` da nuvem
-                                        # levantava RuntimeError. Corrigido e coberto por
-                                        # `tests/unit/test_fuse_linear_tree.py`. O OOF NÃO exercita
-                                        # esse caminho (média de predições, não fusão) -- então este
-                                        # flag só é seguro enquanto aquele teste passar.
-                                        # Ver HISTORICO.md §15.19.
-                                        #
-                                        # MEDIDO EM PACOTE (2026-07-25, part. 42, grade do board):
-                                        # com o B3 por cima, +0,0035 [+0,0008; +0,0057], IC exclui 0,
-                                        # e exclui 0 em `150-400` e `t>400` (78,6% do peso somados).
-                                        # D1 e B3 são ADITIVOS: +0,0027 + 0,0008 = +0,0035 medido.
-                                        # Ver HISTORICO.md §15.18.
-                                        #
-                                        # D1, REABERTO E ADOTADO EM 2026-07-25 (decisão do usuário),
-                                        # depois de adotado e retratado no mesmo dia. Ver o histórico
-                                        # completo abaixo -- ele é o ponto principal deste bloco.
-                                        #
-                                        # *** POR QUE VOLTOU A `true` ***
-                                        # A retratação apoiou-se num K=2 da partição 43 (-0,0019)
-                                        # comparado contra uma adoção feita em K=4. Reverter com
-                                        # evidência MAIS FRACA do que a que fez entrar é um erro de
-                                        # padrão probatório, e o próprio repo o registrou como ERRATA
-                                        # (HISTORICO.md §15.16). O K=4 da partição 43 depois deu
-                                        # **+0,0005** -- o sinal não inverte.
-                                        # SALDO em K=4 nas DUAS partições: +0,0027 e +0,0005.
-                                        # Média ~+0,0016, acima da barra (~0,0014). Positivo nas duas,
-                                        # significativo em uma.
-                                        # O comentário anterior fechava dizendo "reabrir exige K=4 nas
-                                        # duas partições, não K=4 numa só" -- condição CUMPRIDA.
-                                        #
-                                        # RESSALVA HONESTA, para quem reabrir isto de novo: a
-                                        # dispersão entre partições (+0,0027 vs +0,0005, 5x) é grande
-                                        # em relação ao efeito, e o IC da 43 inclui zero. O que
-                                        # sustenta a adoção não é significância nas duas -- é a média
-                                        # acima da barra somada a custo de inferência ZERO e ao
-                                        # mecanismo do E0c. Se o custo fosse em latência ou features,
-                                        # esta decisão seria outra.
-                                        #
-                                        # ENTRA SOZINHO: o par D1+A3b é PIOR que o D1 puro
-                                        # (-0,0069 em t>400, IC exclui 0). Manter `base_rate_weighted`
-                                        # em `false`.
+  linear_tree: false                   # D1, ADOTADO E RETRATADO EM 2026-07-25 -- a réplica na
+                                        # partição 43 INVERTEU O SINAL (ver o bloco medido abaixo).
+                                        # Mantido `false`. O texto original da adoção fica registrado
+                                        # porque o braço continua interessante e alguém vai reabri-lo:
                                         #
                                         # (adoção) Folhas LINEARES em vez de constantes.
                                         # Folhas LINEARES em vez de constantes. O E0c mediu que o
@@ -294,16 +252,15 @@ lightgbm:                              # plano §8.3
                                         # (+0,0025 -> +0,0027) e o bucket-alvo ficou estável.
                                         # Custa ~2x o tempo de treino; inferência intocada.
                                         #
-                                        # *** A RETRATAÇÃO (2026-07-25 manhã), E POR QUE CAIU ***
-                                        # MEDIDO na PARTIÇÃO 43 (K=2, mesma grade): -0,0019, lido na
-                                        # hora como "o sinal INVERTE" (0,62211 -> 0,62025).
-                                        # ISSO NÃO SE SUSTENTOU: era K=2, e o ruído de semente na
-                                        # diferença de dois bags K=2 é ~0,004 -- maior que o efeito
-                                        # que se pretendia medir, e invisível para o bootstrap
-                                        # pareado. O K=4 da mesma partição deu +0,0005.
-                                        # Fica registrado porque a LIÇÃO é o ativo: não comparar
-                                        # medições de K diferentes, e nunca reverter por evidência
-                                        # mais fraca do que a da adoção.
+                                        # *** POR QUE FOI RETRATADO ***
+                                        # MEDIDO na PARTIÇÃO 43 (K=2, mesma grade): **-0,0019**.
+                                        # O sinal INVERTE. Incumbente 0,62211 -> linear_tree 0,62025.
+                                        # A variância de partição é ~0,007, 2,6x o efeito, então um
+                                        # +0,0027 numa partição e -0,0019 na outra é o padrão exato
+                                        # da costura C5 (§14.3), adotada e retratada em 24h.
+                                        # A regra da campanha -- nada entra sem IC pareado favorável
+                                        # nas DUAS partições -- existe por isto e acabou de pagar.
+                                        # Reabrir exige K=4 nas duas partições, não K=4 numa só.
   base_rate_weighted: false            # A3b, ADOTADO E RETRATADO 2026-07-25 pelo mesmo motivo:
                                         # partição 42 K=4 +0,0010, **partição 43 K=2 -0,0018**.
                                         # Ajusta a curva de taxa-base (o
@@ -334,28 +291,9 @@ lightgbm:                              # plano §8.3
                                         # Usar o fold inteiro reduz essa fonte de ruido; reativar
                                         # (>0) só se o custo por rodada em datasets maiores exigir e
                                         # com subamostra bem maior (>= algumas centenas de milhares).
-  bag_seeds: [777, 101, 202, 303, 404, 505, 606]   # B1, ADOTADO 2026-07-25 (K=4 -> K=7).
-                                        # bagging de sementes FUNDIDAS (src/sbrt/model/fuse.py).
-                                        # +0,0040 medido para o K=4; K=4 captura 83% do ganho
-                                        # disponivel e a curva SATURA em K=7.
-                                        # MEDIDO 2026-07-25 (K=7 vs K=4, particao 42, grade do board):
-                                        #   geral      +0,0011 [+0,0002; +0,0018]  IC EXCLUI 0
-                                        #   150-400    +0,0014 [+0,0002; +0,0023]  IC EXCLUI 0
-                                        #   TS-AUC 0,6277 -> 0,6288
-                                        # A campanha PRE-REGISTROU "+0,0008 a +0,0010, so compute"
-                                        # pela curva da campanha X e mediu +0,0011: previsao
-                                        # confirmada, nao resultado pescado.
-                                        # POR QUE ENTRA COM UMA SO PARTICAO: o mecanismo e reducao de
-                                        # variancia -- propriedade matematica, nao hipotese empirica
-                                        # que possa dar negativo. Exigir replica na 43 para isto seria
-                                        # aplicar teste de hipotese a um teorema. (Contraste com o A6
-                                        # e o C1, que SAO hipoteses e por isso seguram.)
-                                        # CUSTO REAL: 35 boosters fundidos contra 20 = ~75% mais
-                                        # INFERENCIA, alem de 7x o tempo de treino. Nao ha orcamento
-                                        # de latencia documentado no repo; se um aparecer, este e o
-                                        # primeiro item a reverter -- e o unico do pacote cujo custo
-                                        # e recorrente.
-                                        # Custa 7x o tempo de TREINO
+  bag_seeds: [777, 101, 202, 303]      # bagging de sementes FUNDIDAS (src/sbrt/model/fuse.py).
+                                        # +0,0040 medido; K=4 captura 83% do ganho disponivel
+                                        # (satura em +0,0048 com K=7). Custa 4x o tempo de TREINO
                                         # na nuvem; o dataset e construido uma vez so.
                                         # A semente 42 fica de fora: contaminada por selecao, ela e
                                         # a PIOR para este conjunto de features (docs/BACKLOG_TSAUC.md).
@@ -437,36 +375,6 @@ weights:                               # X1 (BRAINSTORM_RUPTURA_TSAUC.md §3): s
                                        # séries de quebra precoce (0<τ<50), as demais ficam com peso 1.
 
 postprocess:
-  mode: ema_asym                       # B3, ADOTADO 2026-07-25. Era `free`. free|hold|soft|ema|ema_asym
-                                        # — plano §7. ESTE É O ÚNICO ITEM DA CAMPANHA QUE PASSA NO
-                                        # PROTOCOLO INTEIRO: positivo nas DUAS partições com IC
-                                        # excluindo zero.
-                                        #   partição 42  +0,0008 [+0,0002; +0,0013]  exclui 0
-                                        #   partição 43  +0,00094 [+0,00039; +0,00143] exclui 0
-                                        #   150-400 (43) +0,0010 [+0,0004; +0,0017]  exclui 0
-                                        #   t<=50        EXATAMENTE 0,0000 nas duas (é o gate `min_t`
-                                        #                abaixo; a assinatura confirma que o efeito
-                                        #                medido é o do gate e não de outra fonte)
-                                        # Três estimativas independentes na mesma magnitude: 42
-                                        # (+0,0008), varredura na 43 (+0,00094) e bootstrap pareado
-                                        # na 43 (+0,00094).
-                                        #
-                                        # NOTA DE GOVERNANÇA: o docstring de postprocess/monotonicity.py
-                                        # registra que variantes de monotonicidade "só seriam adotadas
-                                        # mediante confirmação por SUBMISSÃO OFICIAL -- nunca por
-                                        # métrica local (plano §9)". Não há caminho offline para
-                                        # promover isto; a submissão É o teste. Entra no notebook por
-                                        # essa razão, não apesar dela.
+  mode: free                           # free | hold | soft | ema — plano §7
   soft_decay: 0.02
   ema_alpha: 0.7
-  ema_up_alpha: 1.0                    # B3: α=1 na SUBIDA => o score sobe instantaneamente (sem
-                                        # suavização); toda a ação está na descida.
-  ema_down_alpha: 0.2                  # B3: α=0,2 na descida => decai devagar. O par (1,0 / 0,2) é um
-                                        # max-hold SUAVE -- e é suave de propósito: o max-hold RÍGIDO
-                                        # foi morto pelo contraexemplo CE1 (trava alarme falso nas
-                                        # séries sem quebra). Aqui a evidência ainda decai.
-  min_t: 50                            # B3: só aplica em t>50; abaixo passa intacto. O A1 é braço de
-                                        # t alto (ganha em 150-400 e t>400, PERDE em t<=50) e o gate
-                                        # evita o pedágio. A recursão RECOMEÇA em t=51 -- ver a nota
-                                        # em config.py:PostprocessConfig.min_t. É o que reproduz
-                                        # `apply_vema_oof.py --min-t 50`, como o +0,0009 foi medido.

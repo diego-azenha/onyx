@@ -2,9 +2,26 @@
 distribuição do histórico (plano §4.2 #23; Vovk et al. 2005; Volkhonskiy et al. 2017).
 
 Evidência livre de distribuição, O(log n_h)/passo via busca binária nos arrays ordenados do
-histórico (`H0Params.sorted_e_hist` / `sorted_abs_e_hist`). Opera sempre sobre `e` (escala congelada)
-porque os arrays ordenados de referência foram construídos a partir do resíduo/sigma_e do histórico —
-comparar `e_vol` contra eles seria inconsistente de escala quando o ajuste de volatilidade está ativo.
+histórico (`H0Params.sorted_e_hist` / `sorted_abs_e_hist`). Opera sobre a escala congelada (nunca
+`e_vol`): os arrays ordenados de referência foram construídos a partir do resíduo/sigma_e do
+histórico, e comparar `e_vol` contra eles seria inconsistente de escala quando o ajuste de
+volatilidade está ativo.
+
+## A6 (CAMPANHA_POLIMENTO.md) — `e` clipado contra um histórico NÃO clipado
+
+A referência é `e_hist = resid / sigma_e` (`state/h0.py`), construída **sem clip**. O valor online,
+porém, chega aqui já clipado em `cfg.h0.clip_e` = [-8, 8] (`whiten_step`). A comparação é portanto
+ASSIMÉTRICA na cauda: toda observação com `|e_raw| > 8` é ranqueada como se valesse exatamente 8,0
+contra um histórico que preservou os seus próprios extremos, então o p-value dela satura na massa de
+cauda do histórico acima de 8 em vez de cair para o piso `1/(n_h+1)`.
+
+Isso importa porque (a) `conformal_logm_abs` é a feature nº 1 do modelo (xs-SHAP 0,061; conv_share
+0,147) e (b) MEDIDO em `train_rows_bocpd`: o clip morde em 7,50% das séries, e de forma
+DIFERENCIAL por classe -- 6,99% das linhas positivas contra 2,64% das negativas (2,6x). O clip está
+comprimindo justamente o material que separa as classes.
+
+Um p-value de rank é robusto por construção -- o clip não lhe compra estabilidade nenhuma, só custa
+resolução. `cfg.conformal.use_raw` restaura a simetria (estatística e nulo na mesma escala).
 
 Três variantes de p-value (todas via mid-rank, para lidar com empates):
 - abs: cauda superior de |e_t| contra |e| do histórico — sensível a variância/cauda.
@@ -52,6 +69,9 @@ class ConformalBlock:
         self.n_h = h0.n_h
         self.epsilons = list(cfg.conformal.epsilons)
         self._log_k = math.log(len(self.epsilons))
+        # A6: ver a nota no topo do módulo. O histórico de referência não é clipado; usar `e_raw`
+        # põe a estatística e o nulo dela na mesma escala.
+        self.use_raw = getattr(cfg.conformal, "use_raw", False)
 
         self.L_abs = {eps: 0.0 for eps in self.epsilons}
         self.L_abs_reset = {eps: 0.0 for eps in self.epsilons}
@@ -59,9 +79,10 @@ class ConformalBlock:
         self.L_sign = {eps: 0.0 for eps in self.epsilons}
 
     def update(self, e: float, e_raw: float, e_vol: float, t: int) -> None:
-        p_abs = _upper_tail_p(self.sorted_abs_e_hist, abs(e), self.n_h)
-        p_right = _upper_tail_p(self.sorted_e_hist, e, self.n_h)
-        p_sign = _lower_tail_p(self.sorted_e_hist, e, self.n_h)
+        z = e_raw if self.use_raw else e
+        p_abs = _upper_tail_p(self.sorted_abs_e_hist, abs(z), self.n_h)
+        p_right = _upper_tail_p(self.sorted_e_hist, z, self.n_h)
+        p_sign = _lower_tail_p(self.sorted_e_hist, z, self.n_h)
 
         log_p_abs = math.log(p_abs)
         log_p_right = math.log(p_right)

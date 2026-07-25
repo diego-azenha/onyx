@@ -493,6 +493,7 @@ reconstruída do transcript; os veredictos abaixo cobrem as duas.
 | C2 | conserto do suporte do portador "as-of" + re-probe | probe real-vs-sintético **0,9993** mesmo com o conserto | bloqueado (14.5) |
 | C3 | bagging de partição (2 partições × 4 sementes) | partB 0,6029 vs partA 0,6102; bag das duas −0,0014 [−0,0039, +0,0013] | morto, **mas achou o principal** (14.2) |
 | C5 | modelo por regime de t | ver 14.3 — **nasceu vencedor e foi retratado no mesmo dia** | costura descartada |
+| **C6** | BOCPD isolado sobre o V4 (187 feat) | geral **+0,0020** [−0,0010, +0,0048] (inclui 0); **150–400 +0,0041** [0,0007, 0,0072] **exclui 0** (bucket-alvo) | **passa a regra, NÃO adotado** (14.10) |
 | C4 | varredura de hiperparâmetros | **NÃO RODADO** (decisão do usuário, 14.7) | pulado |
 
 ### 14.2 O achado que reorganiza a rodada: variância de PARTIÇÃO
@@ -609,7 +610,60 @@ Quatro números quase iguais convivem no repositório e **um deles é contaminad
 **Não use `oof_b183_bag4` como baseline.** O +0,0040 do X1 está medido contra `oof_x0_a_bag4` (limpo),
 que é o certo; contra o b183 contaminado o mesmo X1 mediria só +0,0018.
 
-### 14.9 Lições desta rodada
+### 14.9 C6 — BOCPD isolado: o experimento que faltava desde o V5
+
+**O que era.** O BOCPD entrou no projeto **dentro** do V5, junto com a poda de L-momentos e de
+`dep_*_w050`. O V5 regrediu como pacote e foi revertido (§9), mas os dois componentes tinham medido
+positivo **separados** (poda +0,0027, BOCPD +0,0029) — sempre na régua velha. O experimento que separa
+as duas mudanças (**V4 + BOCPD, SEM a poda**) estava registrado como "nunca rodado" desde 22/07.
+Rodou agora: `SBRT_ENABLE_BOCPD=1` acrescenta o `BOCPDBlock` ao `default_blocks()` (opt-in; o default
+de produção fica byte-a-byte igual, verificado), 4 colunas `bocpd_*` ⇒ **187 features**.
+
+**Integridade da build.** A build nova reproduz as 183 colunas compartilhadas **bit-a-bit** contra
+`train_rows_3eixos.parquet` (max|diff| = 0 em amostra de colunas, padrão de NaN idêntico, linhas
+alinhadas) — o ganho é do BOCPD, não de deriva de build.
+
+**Resultado.** 0,6102 → **0,6121**. Geral **+0,0020** [−0,0010, +0,0048] (inclui 0); **150–400
++0,0041** [0,0007, 0,0072] **exclui 0**; t>400 +0,0015; 50–150 −0,0004; t≤50 −0,0019.
+
+**Veredicto: passa a regra formal, mas NÃO é adotado agora.** Pela regra do R0 (IC exclui 0 no
+agregado **ou** no bucket-alvo declarado a priori) o C6 passa pelo bucket-alvo. Três ressalvas honestas:
+
+1. O bucket-alvo `150–400` é o **default recomendado** do `NOTAS_AGENTES.md` §5 (49% do peso), não uma
+   previsão específica do C6 — foi declarado antes de ver o perfil por bucket, mas não é uma hipótese
+   mecanicista sobre *este* braço.
+2. **É partição 42 (a sortuda) apenas.** É exatamente a situação do B6 antes da réplica — e o B6
+   sobreviveu, a costura C5 não. Um +0,0020 com IC agregado incluindo 0 precisa do `--fold-seed 43`
+   antes de entrar em qualquer pacote (§14.2).
+3. **Implantação é mais cara que a do B6.** O B6 é um knob de config; o C6 muda o **conjunto de
+   features** — exige `BOCPDBlock` no `default_blocks()` de produção, novo `feature_schema`, e ~30
+   µs/passo (folga confortável no gate de 1500, mas não é zero).
+
+**E não se pode assumir que soma com o B6** — então foi medido. **B6+C6 conjuntos = 0,6139**
+(`compare_b6c6_vs_b6.json`), contra B6 sozinho 0,6125:
+
+| bucket | conjunto − B6 sozinho | IC 95% | exclui 0 |
+|---|---|---|---|
+| geral | **+0,0014** | [−0,0008, +0,0033] | **não** |
+| 150–400 | +0,0027 | [+0,0004, +0,0051] | sim |
+| t>400 | **+0,0000** | [−0,0023, +0,0024] | não |
+| 50–150 | +0,0005 | [−0,0033, +0,0044] | não |
+| t≤50 | −0,0012 | [−0,0084, +0,0051] | não |
+
+**Aditividade PARCIAL, não nula e não total.** A soma ingênua previa 0,6102+0,0023+0,0020 = 0,6145; o
+medido é 0,6139 — sobrevivem ~70% do efeito isolado do C6. É melhor que o precedente do V5 (que
+regrediu de vez), mas o Δ marginal cai exatamente **em cima da barra**, com IC agregado incluindo 0.
+
+A linha que decide é **t>400: +0,0000**. O ganho isolado do C6 naquele bucket (+0,0015) **desaparece
+por completo** em cima do B6 — o B6 já captura o que o BOCPD tinha lá. O valor marginal do C6 encolhe
+para **um único bucket** (150–400).
+
+**Decisão: C6 NÃO entra.** Custa mudança de conjunto de features + `feature_schema` + ~30 µs/passo, e
+entrega um efeito que raspa a barra, some no agregado e vive num bucket só — medido na partição
+sortuda. Se alguém quiser reabrir, o preço de entrada é a réplica em `--fold-seed 43` (~40 min), o
+mesmo padrão que matou a costura C5.
+
+### 14.10 Lições desta rodada
 
 - **Variância de partição > variância de semente > barra.** Antes de acreditar em qualquer efeito de
   ~0,003, replicar na outra partição. Custou ~1 h e evitou empacotar um modelo mais caro e pior.
@@ -618,3 +672,565 @@ que é o certo; contra o b183 contaminado o mesmo X1 mediria só +0,0018.
   se olhou para o número de rodadas e para a logloss, não só para o Δ final.
 - **Métrica invariante = teste de graça.** A invariância da `ts_auc` à sigmoide isolou o veredicto do
   B4 do bug de parada que existia ao mesmo tempo.
+- **"Passa a regra" ≠ "adotar".** O C6 passa pelo bucket-alvo e mesmo assim fica de fora até a réplica
+  de partição: a regra do R0 foi escrita antes de o projeto saber que a variância de partição é 5× a
+  barra. A regra continua necessária; deixou de ser suficiente.
+
+---
+
+## 15. Campanha de polimento (2026-07-25) — a frente A achou um defeito na régua
+
+Ver `docs/RELATORIO_POLIMENTO.md` para o relatório completo e `CAMPANHA_POLIMENTO.md` para o plano
+que a originou. Aqui ficam só os vereditos e o que mudou no código.
+
+### 15.1 A2 — a TS-AUC OOF era agregada na GRADE ERRADA (o achado central)
+
+O OOF vive na grade com thinning (399 valores de `t`); o board avalia todos os ~999 passos. `AUC_t`
+em cada passo retido é **exato** (o thinning descarta passos, nunca séries — verificado casa a casa
+contra `y_train.parquet`: `max|Δn_pos| = max|Δn_neg| = 0`), mas o **agregado** não é: cada `t` retido
+entra com o próprio `w_t` em vez da massa do bloco que representa.
+
+**Pesos por bucket, corrigidos:**
+
+| bucket | media-se | **board** | razão |
+|---|---|---|---|
+| 1–50 | 8,1% | **3,9%** | 0,48 |
+| 51–150 | 26,6% | **17,5%** | 0,66 |
+| 151–400 | 48,7% | **46,7%** | 0,96 |
+| **401+** | 16,5% | **31,9%** | **1,93** |
+
+Duas verificações independentes: reponderar por bloco (sem interpolar nada) e interpolar `AUC_t` na
+grade cheia dão **0,6277 e 0,6278** — concordam em 0,0001.
+
+**Consequência 1 — o "câmbio OOF→placar" era a grade.** Reponderado, o OOF prevê o placar com erro
+de ~0,002 em dois pontos independentes: `5e42ff5` 0,6227 vs board 0,6201; incumbente 0,6278 vs
+0,6267. O offset de +0,0101 registrado como desconhecido em `NOTAS_AGENTES.md` §5 não existia.
+
+**Consequência 2 — todo braço que ganha em `t>400` foi subcreditado por ~2×**, e todo braço que ganha
+em `t≤150`, supercreditado por ~1,5–2×. O caso mais grave é o E0c, o experimento que fundamentou o
+veredito de "beco sem saída" do `RELATORIO_EXP0.md`: o ganho das interações vive em `t>400`
+(+0,0175, IC exclui 0), exatamente o bucket cujo peso dobra.
+
+**Mudanças:** `evaluation/ts_auc.py:weighted_ts_auc(..., w_mult)` + `board_grid_multipliers`;
+`scripts/compare_oof.py --grid full` **por default**; `scripts/a2_full_grid_ts_auc.py` e
+`scripts/a2_reaudit.py`; `NOTAS_AGENTES.md` §5 corrigido.
+
+### 15.2 A6 — o clip do resíduo contra nulos que não são clipados (dois defeitos)
+
+`whiten_step` clipa `e` em `cfg.h0.clip_e` = [−8, 8]. De 19 blocos, só `lmoments.py` usa `e_raw`
+(`accumulators.py` o usa nas duas estatísticas de cauda). O problema é que **as referências não são
+clipadas**:
+
+1. **`state/conformal.py`** — a feature nº 1 do modelo (`conformal_logm_abs`: xs-SHAP 0,061,
+   `conv_share` 0,147) ranqueia `|e|` clipado contra `h0.sorted_abs_e_hist`, construído de
+   `e_hist = resid/sigma_e` **cru**. Toda observação com `|e_raw| > 8` é ranqueada como se valesse
+   8,0 → o p-value satura na massa de cauda do histórico em vez do piso `1/(n_h+1)`.
+2. **`state/calibration.py:compute_null_stats`** — o replay que estima o nulo por série de cada
+   coluna `_cal` recebe `e_hist` **não clipado**, enquanto a produção calcula a mesma estatística
+   sobre `e` clipado. Atinge `mmd_joint_slow_cal` (nº 4) e `accum_window_var_ln_w100_cal` (nº 10).
+
+**Quanto morde** (`train_rows_bocpd`, 2,54 M linhas): `max|e_raw|` excede 8 em **7,50% das séries**;
+por classe, **6,99% das linhas positivas contra 2,64% das negativas (2,6×)**. O clip comprime
+justamente o material que separa as classes.
+
+**Correção direcional** (não existe "unclip tudo": o maior `|e_raw|` da base é **15.774**, e um ponto
+desses destrói `accum_welford_var_ln`): pôr cada estatística na escala do **seu próprio** nulo.
+`conformal.use_raw` (rank-based, referência crua → usar `e_raw`) e `h0.null_clip_match` (colunas
+`_cal` são calculadas sobre `e` clipado → clipar o replay). Ambas `false` por default; defaults
+inalterados, verificado (193 features, mesma lista). **Medição pendente — exige rebuild.**
+
+### 15.3 A3 — o conjunto implantado ≠ o conjunto medido
+
+A submissão não empacota modelo: o notebook embute o pipeline e a nuvem chama `train()`, então quem
+define o conjunto implantado é `default_blocks()` — hoje **193 features** (V4 183 + MultiRep 6 +
+BOCPD 4). Mas o incumbente **medido** (`oof_b6c6_joint_bag4`) tem **187**: foi treinado com
+`--drop-prefix spec_ ord_ mrep_`. **O B6 (+0,0036) e o C6 (+0,0014) foram medidos numa base sem
+`mrep_` e aplicados a uma produção que o contém** — e o precedente literal em `scorer.py` é que esses
+ganhos não somam (*"V5+mrep: os ganhos NÃO SOMAM, −0,0024"*). Braço `p1_deploy193`.
+
+Verificado e **correto**: (i) `platform.train` treina as 4 sementes × 5 folds e funde os 20 boosters
+com verificação numérica; (ii) score em float64 sem clip/arredondamento; (iii) `zero_as_missing`
+fica no default `false`.
+
+### 15.4 A3b — o `init_score` deixou de remover um offset e passou a injetar um
+
+`model/base_rate.py` ajusta a curva de taxa-base na **contagem crua**, mas desde o R1
+(`model/weights.py`) o treino usa pesos pareado-consistentes que **equalizam as classes dentro de
+cada passo**. Medido: a taxa de positivos **ponderada** é 0,4947 em `t=10` e 0,4996 em `t=400` —
+praticamente 0,5 em todo `t≥10` — enquanto o `init_score` injetado vale −3,833 e −0,790.
+**Descasamento médio +1,22 em log-odds, máximo +3,81.**
+
+O R1 invalidou a premissa do A2 e ninguém rechecou. É neutro para a métrica no limite (invariância
+C1), mas o modelo gasta árvores desfazendo o offset e **a logloss que governa a parada antecipada
+passa a ser dominada por essa correção de `f(t)`** — consistente com a parada disparar em 79–117
+árvores enquanto o toco do E0c treinou 1.529–3.186. `lightgbm.base_rate_weighted`, braço `p2_brw`.
+
+### 15.5 Vereditos negativos desta rodada (não refazer)
+
+- **A1 — rótulos: está CORRETO.** O snapshot local é pós-W23: exatamente **29 séries** com
+  `tau_index = 0` (a assinatura do changelog) e as 2.868 linhas delas com `y = 1` no parquet.
+- **A5 — passos frios: real e irrelevante.** O modelo é anti-preditivo em `t ∈ [1,8]` (AUC 0,4374 em
+  `t=3`, cruza 0,50 só em `t=9`), com 67,9% das features em NaN de warmup em `t≤4`. Mas `t≤8` carrega
+  **0,16%** do peso do board: forçar score constante ali vale **+0,00004**, 1/35 da barra.
+- **B2 — espaço de média do bag: empate exato.** Probabilidade 0,62772 · logit 0,62773 · rank-average
+  0,62756; Spearman 0,99999. Vale como auditoria: a produção funde em logit e o OOF media
+  probabilidade, e a diferença é imaterial.
+- **Registrado, não medido:** 15 colunas seguem 100% NaN em `t=50` (`haar_*`, `mmd_*_cal`,
+  `jump_*_w100_cal`, `varloc_recent_vs_lagged*`) — a pegadinha do §7 (NaN dilui `feature_fraction`)
+  acontecendo em produção.
+
+### 15.6 Dois bugs pré-existentes que a suíte completa expôs
+
+Rodar `pytest tests/unit tests/causality tests/determinism` (que a campanha fez para validar as
+mudanças do A2/A6) reprovou 5 testes — **nenhum deles causado pelas mudanças da campanha**.
+
+**1. `train_rank` está quebrado desde 2026-07-24** (`model/train.py`). Os blocos do B5/B6 escrevem em
+`params`, mas em `train_rank` essa variável só passa a existir DENTRO do laço de folds (onde recebe
+`lambdarank_truncation_level`); antes disso só existe `base_params`. Resultado: `UnboundLocalError`.
+
+Ficou **latente** enquanto `monotone_llr` e `feature_contri_meta` eram off por default, e passou a
+disparar **sempre** quando o B6 adotou `feature_contri_meta: 0.6` no YAML. Ou seja: **o braço de
+ranking inteiro (R3) não roda desde a adoção do B6**, e ninguém percebeu porque `make ci` não estava
+sendo rodado inteiro. Corrigido escrevendo em `base_params`.
+
+**2. `test_scorer_feature_order_stable_and_no_leakage_of_T` guardava a premissa errada.** O teste
+exigia 189 features e "tem de casar com `resources/feature_schema.json` — o scorer e o modelo
+empacotado são um par". Duas coisas mudaram e o comentário não:
+
+- `default_blocks()` emite **193** desde que o C6 ligou o BOCPD em produção;
+- **a submissão não empacota modelo** (§15.3), então `resources/` não tem consumidor no caminho de
+  submissão e a premissa do "par" não descreve mais o sistema.
+
+O número foi atualizado para 193 e o comentário reescrito para guardar o que de fato importa: que
+ninguém mude `default_blocks()` sem perceber que o conjunto **implantado** deixa de casar com aquele
+em que os braços foram **medidos**.
+
+**Lição operacional:** `make ci` existe e não estava sendo rodado inteiro. Um dos dois bugs deixou uma
+frente inteira do projeto morta por um dia sem sinal nenhum.
+
+### 15.7 Triagem K=2 na partição 42 (grade do board)
+
+Baseline pareado `oof_b6c6_joint_bag2` = **0,62640**. Barra ~0,0014. Bucket-alvo declarado a priori:
+`150–400` (o default do `NOTAS_AGENTES.md` §5, agora 46,7% do peso).
+
+| braço | o que muda | nível | Δ geral | IC 95% | `150–400` |
+|---|---|---|---|---|---|
+| **`p3_lintree`** (D1) | `linear_tree=true` | 0,62887 | +0,0025 | [−0,0007; +0,0053] | **+0,0043 [+0,0001; +0,0080] EXCLUI 0** |
+| **`p2_brw`** (A3b) | `init_score` sob os pesos | 0,62877 | +0,0024 | [−0,0012; +0,0057] | +0,0026 |
+| `p4_cap` | `lr` 0,03, cap 3000, ES 300 | 0,62756 | +0,0012 | [−0,0011; +0,0036] | +0,0000 |
+
+**`p3_lintree` passa a regra do R0 pelo bucket-alvo.** E o perfil por bucket é o que o mecanismo
+prevê, o que vale mais que o número: ganha onde há pontos por folha para ajustar uma reta (`150–400`
++0,0043, `t>400` +0,0036) e **perde no warmup** (`t≤50` −0,0119, onde 68% das colunas são NaN em
+`t≤4`). É a previsão literal do E0c — problema aditivo e suave, degraus aproximando curvas.
+
+**`p4_cap` responde à pergunta que o E0c revisado levantou.** 2,4× mais rodadas (420–491 contra
+173–220) com `lr` menor rendem +0,0012 e **exatamente 0,0000 em `t>400`**. A capacidade que falta ao
+toco não é a que se compra com mais rodadas — e isso delimita a releitura do §15.1: o E0c diz que as
+interações **contribuem** +0,0059 para o incumbente, não que exista outro +0,0059 disponível.
+
+**Diagnóstico barato que refutou o mecanismo do A3b** (a lição do §14.10, antes de gastar K=4):
+
+| modelo | rodadas por fold | melhor logloss |
+|---|---|---|
+| incumbente | 173–220 | 0,6625 |
+| `p2_brw` | 160–213 | 0,6607 |
+| `p4_cap` | 420–491 | 0,6622 |
+| toco E0c | 1829–3486 | 0,6662 |
+
+A previsão era que remover o offset de `f(t)` faria a parada disparar mais tarde. **Não aconteceu** —
+`meta_t` e `meta_ln1p_t` são features, então o modelo desfaz qualquer `f(t)` com duas divisões. O
+descasamento de +3,81 em log-odds é real e **barato de desfazer**. O braço segue para K=4 pelo Δ,
+com a hipótese mecânica registrada como refutada.
+
+**Os dois líderes não podem ser supostos aditivos** (`scorer.py`: *"V5+mrep: os ganhos NÃO SOMAM"*;
+B6+C6 só parcialmente aditivo, §14.9). Se ambos sobreviverem à réplica na partição 43, o par tem de
+ser medido junto.
+
+### 15.8 O D1 está sendo subestimado pela regra de parada
+
+Diagnóstico estrutural do `linear_tree`, na linha do §14.10 ("olhar as rodadas e a logloss, não só o Δ"):
+
+| modelo | rodadas | árvores/fold | melhor logloss por fold |
+|---|---|---|---|
+| incumbente | 173–220 | 73–120 | 0,6625 · 0,6472 · 0,6593 · 0,6515 · 0,6615 |
+| `p3_lintree` | 146–177 | **46–77** | 0,6606 · 0,6504 · 0,6581 · **0,6565** · **0,6657** |
+
+O braço entrega **+0,0025 de TS-AUC com ~35% menos árvores** e uma logloss **igual ou pior em três
+dos cinco folds**. As duas coisas juntas dizem que o ganho é de **qualidade de ordenação por árvore**,
+não de ajuste pontual — e que a parada antecipada, que lê `binary_logloss`, corta o braço antes do
+ponto em que ele ainda ganharia na métrica que conta.
+
+É a mesma divergência de réguas já documentada em `config.py:LightGBMConfig.early_stopping_metric`,
+agora com um caso em que ela custa. **Consequência prática:** antes de julgar o D1 pelo Δ de K=2,
+vale um braço `linear_tree` + paciência maior (`--early-stopping-rounds 300`) — o custo é um treino e
+o teto é maior que o medido. Registrado como o próximo passo natural do D1, não como conclusão.
+
+### 15.9 O K=4 derruba o A3b — e calibra a leitura do D1
+
+Promovido de K=2 para K=4 na partição 42 (grade do board):
+
+| | baseline | candidato | Δ geral | IC 95% |
+|---|---|---|---|---|
+| `p2_brw` K=2 | 0,62640 | 0,62877 | +0,0024 | [−0,0012; +0,0057] |
+| **`p2_brw` K=4** | 0,62772 | 0,62869 | **+0,0010** | **[−0,0018; +0,0033]** |
+
+**De 1,7× a barra para 0,7×.** O nível do candidato mal se mexeu (0,62877 → 0,62869); quem subiu foi
+o **baseline** (0,62640 → 0,62772), porque o bag de 4 sementes é melhor que o de 2. Ou seja: boa parte
+do "ganho" de K=2 era o candidato ter tido sorte de sorteio contra um baseline mais ruidoso.
+
+É o mecanismo já documentado em `NOTAS_AGENTES.md` §5 ("a régua tem dp de 0,0041 que o bootstrap
+pareado não vê") acontecendo ao vivo. **Veredito do A3b: abaixo da barra, não promover.** O
+descasamento de +3,81 em log-odds no `init_score` continua sendo um defeito real e vale corrigir por
+higiene — mas não paga em TS-AUC, e a hipótese mecânica dele já havia sido refutada pelo número de
+rodadas (§15.7).
+
+**A consequência para o D1 é a lição desta rodada.** O `p3_lintree` está em +0,0025 com K=2 — o mesmo
+patamar de onde o A3b caiu pela metade. O IC dele em `150–400` excluir 0 é um sinal melhor, e o perfil
+por bucket tem mecanismo, mas **nada disso o dispensa do K=4**. Dois braços a ~+0,0025 em K=2, um dos
+quais encolhe para +0,0010 em K=4, é a medida empírica de quanto a triagem K=2 infla neste projeto.
+
+**Regra a herdar:** em K=2, tratar Δ como **ordenação entre braços**, nunca como estimativa de
+efeito. Só o K=4 (e depois a partição 43) produz número.
+
+### 15.10 Hipótese do §15.8 REFUTADA: a parada não estava cortando o D1
+
+O §15.8 observou que o `linear_tree` entrega +0,0025 com ~35% **menos** árvores e logloss igual ou
+pior, e propôs que a parada antecipada (que lê `binary_logloss`) o cortava antes do ponto útil — logo
+o número medido seria um **piso**. Braço `p9_lintree_pac`: mesmo D1, `--early-stopping-rounds 300`
+(contra 100) e `--n-estimators-cap 3000`.
+
+| | rodadas por fold | árvores/fold | melhor logloss |
+|---|---|---|---|
+| `p3_lintree` | 173, 176, 166, 177, 146 | **73, 76, 66, 77, 46** | 0,6606 · 0,6504 · 0,6581 · 0,6565 · 0,6657 |
+| `p9_lintree_pac` | 373, 376, 366, 377, 346 | **73, 76, 66, 77, 46** | **idênticos** |
+
+As 200 rodadas a mais são exatamente a janela de paciência estendida: a **melhor iteração não muda**.
+Como o LightGBM guarda o melhor modelo, `p9_lintree_pac` é **bit-idêntico** ao `p3_lintree` — 30 min
+de treino por semente para reproduzir o mesmo artefato. Braço removido do
+`scripts/run_polimento_fase4.sh`.
+
+**O que fica refutado:** que o ótimo de logloss do D1 estivesse além do alcance da paciência atual.
+Ele ocorre de fato em 46–77 árvores.
+
+**O que NÃO fica descartado:** que a *régua* esteja errada — a TS-AUC pode seguir melhorando além do
+ótimo de logloss. Mas isso é uma pergunta sobre o **critério**, não sobre a paciência, e testá-la
+exige **rodadas fixas** (o desenho do X0: ES desligado, cap fixo, argmax da curva média entre
+sementes), não uma janela maior. `early_stopping_metric: ts_auc_by_t` já foi medido e regrediu
+(−0,0099, `config.py`), então o caminho é rodadas fixas, não trocar a métrica de parada.
+
+**Lição de método:** "menos árvores + logloss pior + TS-AUC melhor" tem duas explicações — parada
+prematura, ou o modelo simplesmente ser melhor por árvore. O diagnóstico das rodadas separava as
+duas e custou um braço descobrir qual era. Rodar `p9` primeiro em UMA semente teria custado 30 min em
+vez de 60.
+
+### 15.11 Reauditoria das decisões passadas sob a ponderação do board
+
+`scripts/a2_reaudit.py`, 150 réplicas, nas duas ponderações. A coluna "thinning" é o **controle**: se
+não reproduzir o número histórico, o instrumento está errado. Reproduziu em todos os pares.
+
+| decisão | thinning (como foi julgada) | **board (correta)** | muda? |
+|---|---|---|---|
+| **B6, partição 42** | +0,0023 [−0,0010; +0,0057] · inclui 0 | **+0,0033 [+0,0004; +0,0063] · exclui 0** | **sim** |
+| **B6, partição 43** | +0,0049 [+0,0016; +0,0080] · exclui 0 | +0,0054 [+0,0027; +0,0087] · exclui 0 | não (reforça) |
+| C6 (BOCPD sobre o B6) | +0,0014 [−0,0006; +0,0036] · inclui 0 | +0,0014 [−0,0003; +0,0031] · inclui 0 | **não** |
+
+**B6:** o §14 registra que na partição 42 "o agregado inclui 0" e que a adoção se apoiava na réplica
+da 43. Sob a ponderação correta a **42 passa sozinha**; média das duas ≈ +0,0044. A adoção estava
+certa e está mais bem sustentada do que o próprio registro dizia.
+
+**C6:** a correção **não o move**. A previsão mecânica (piorar, porque o ganho vivia só em `150–400`
+com `t>400` em +0,0000) estava errada — houve cancelamento: `150–400` mal mudou de peso (48,7% →
+46,7%), dobrar zero continua zero, e o peso retirado de `t≤150`, onde o C6 é plano, compensou. Fica
+onde estava: na barra, IC incluindo 0, um único bucket, sem réplica de partição.
+
+**Generalização que a reauditoria permite:** a correção de grade só move um braço quando o perfil
+por bucket é **desigual entre `t≤150` e `t>400`**. Braços planos (C6) não se movem; braços com ganho
+em `t` alto (B6, E0c) sobem. Isso dá uma triagem barata de quais números históricos vale reauditar —
+basta olhar o perfil por bucket já registrado, sem rodar bootstrap nenhum.
+
+**X1-soft — o veredito cai (2026-07-25).**
+
+| grade | Δ | IC 95% | exclui 0 |
+|---|---|---|---|
+| thinning (como foi adotado) | +0,0040 | [+0,0001; +0,0074] | **sim** |
+| **board (correta)** | **+0,0031** | **[−0,0002; +0,0055]** | **não** |
+
+**Uma mudança em produção deixa de passar a regra do R0.** Mecanismo previsto pelo próprio registro:
+`configs/default.yaml:weights` diz que o ganho do X1 vive em `50<t≤150` (+0,008) e `150<t≤400`
+(+0,004), e a reauditoria mostra `t>400` em **−0,0003**. Ele ganha exatamente nos buckets cujo peso a
+grade antiga inflava (26,6% → 17,5%) e é levemente negativo naquele que ela subpesava (16,5% → 31,9%).
+
+**Não superinterpretar:** o ponto ainda é +0,0031, acima da barra — isto não diz que o X1 machuca,
+diz que a base para adotá-lo era mais fraca do que o registro afirma. E o B6 foi na direção oposta na
+mesma reauditoria: **a correção reordena os braços, não desloca todos igualmente.**
+
+**Consequência para o cardápio:** o C2 (vizinhança do X1 — `detect_floor`, `d_i` com `delta_mean`)
+deixa de ser "afinar um ganho estabelecido" e passa a ser "verificar se há ganho". E vale medir o
+X1 desligado (`weights.detectability_mode: none`) sobre o pacote atual, que nunca foi feito na
+presença do B6 — as duas adoções nunca foram testadas uma contra a outra sob a grade certa.
+
+**A4 — a suspeita do `v4_k4` era artefato de comparação (2026-07-25).**
+
+O `CAMPANHA_POLIMENTO.md` §A4 registrava: *"a higiene do `v4_k4 = 0,6133 > incumbente 0,6125` — se
+esse número for real e não artefato, o incumbente está mal escolhido e o polimento inteiro parte da
+referência errada"*.
+
+| grade | Δ (v4_k4 − incumbente) | IC 95% |
+|---|---|---|
+| thinning | −0,0006 | [−0,0040; +0,0031] |
+| **board** | **−0,0019** | [−0,0049; +0,0015] |
+
+**Era artefato de comparação, não de grade.** O `0,6125` citado é o **B6 sozinho**; o incumbente é o
+B6+C6, que mede **0,6139** na mesma grade. Contra o incumbente de verdade o `v4_k4` é pior nas duas
+ponderações, e mais claramente pior na do board (0,6259 contra 0,6277). **O incumbente não está mal
+escolhido.**
+
+Lição: dois números "quase iguais" citados de contextos diferentes já custaram tempo neste projeto
+(a armadilha de baseline do `NOTAS_AGENTES.md` §9, com quatro V4 quase idênticos e um contaminado).
+Aqui o mesmo padrão apareceu de novo — a defesa é sempre a mesma, comparar **pareado na mesma grade**
+em vez de confrontar níveis anotados.
+
+### 15.12 Saldo da reauditoria: 2 de 5 vereditos mudam
+
+| decisão | thinning | **board** | |
+|---|---|---|---|
+| B6, partição 42 | +0,0023 · inclui 0 | **+0,0033 · exclui 0** | **muda A FAVOR** |
+| B6, partição 43 | +0,0049 · exclui 0 | +0,0054 · exclui 0 | reforça |
+| **X1-soft** | +0,0040 · exclui 0 | **+0,0031 · inclui 0** | **muda CONTRA** |
+| C6 | +0,0014 · inclui 0 | +0,0014 · inclui 0 | imóvel |
+| A4 (`v4_k4`) | −0,0006 | −0,0019 | fecha a suspeita |
+
+**O padrão é o que importa: a correção REORDENA.** Se ela deslocasse todos os braços igualmente,
+seria cosmética e nenhuma decisão mudaria. O que ela faz é redistribuir peso de `t≤150` para `t>400`,
+então **premia braços com ganho em `t` alto (B6, E0c) e pune os que ganham em `t` baixo (X1-soft)**.
+Isso dá o rastreio barato: para saber se um número histórico merece reauditoria, basta olhar o perfil
+por bucket já registrado — nenhum bootstrap necessário.
+
+### 15.13 A3(v) — o conjunto implantado mede igual ao medido, e o `mrep_` deixou de pagar
+
+`p1_deploy193`: o conjunto que `default_blocks()` de fato emite (**193** = V4 183 + mrep 6 + bocpd 4)
+contra o conjunto em que o incumbente foi **medido** (**187**, `--drop-prefix mrep_`). K=2, partição
+42, grade do board:
+
+| | nível |
+|---|---|
+| medido (187) | 0,62640 |
+| implantado (193) | 0,62718 |
+| **Δ** | **+0,0008 [−0,0015; +0,0029]** |
+
+**O descasamento é real e imaterial.** Duas leituras:
+
+1. **Tranquilizadora:** os números medidos do incumbente descrevem o pipeline implantado dentro do
+   ruído. O risco levantado no §15.3 — de que os Δ do B6 e do C6 descrevessem uma base que a produção
+   não usa — não se materializou.
+2. **Acionável:** o `mrep_` foi **adotado valendo +0,0042** (IC excluindo 0) sobre a base V4
+   (2026-07-22). Sobre a base atual, com B6 e C6, vale **+0,0008**. O ganho evaporou — o mesmo padrão
+   de não-aditividade que o próprio `scorer.py` documenta ("V5+mrep: os ganhos NÃO SOMAM").
+
+**Somando os dois passageiros:** `mrep_` (+0,0008, 6 colunas, ~120 µs/passo) e `bocpd_` (+0,0014 na
+barra, 4 colunas, ~30 µs/passo). A produção carrega **10 features e ~150 µs/passo** por um ganho
+conjunto que raspa o ruído. Nenhum dos dois é prejudicial; os dois são **peso morto provável**.
+
+Isso não é uma recomendação de podar às cegas — a poda tem de ser medida como braço próprio, e o
+histórico do V5 mostra que podar dois componentes juntos pode regredir. Mas é a primeira vez que os
+dois aparecem com o custo e o benefício na mesma tabela, sob a grade certa.
+
+### 15.14 D1 (`linear_tree`) sobrevive ao K=4 — o único braço vivo da campanha
+
+Partição 42, grade do board, baseline `oof_b6c6_joint_bag4` = 0,62772:
+
+| | Δ geral | IC 95% | `150–400` | `t>400` | `t≤50` |
+|---|---|---|---|---|---|
+| K=2 | +0,0025 | [−0,0007; +0,0053] | +0,0043 · exclui 0 | +0,0036 | −0,0119 |
+| **K=4** | **+0,0027** | **[+0,0002; +0,0049] · EXCLUI 0** | **+0,0044 · exclui 0** | +0,0027 | −0,0041 |
+
+Nível 0,62772 → **0,63046**. Três coisas separam este número do A3b, que caiu pela metade na mesma
+transição:
+
+1. **Não encolheu com sementes** — +0,0025 → +0,0027, e o IC agregado passou a excluir 0.
+2. **O bucket-alvo é estável** (+0,0043 → +0,0044) e exclui 0 nas duas medições. Não é um bucket que
+   apareceu depois de olhar o resultado: `150–400` é o default declarado a priori do
+   `NOTAS_AGENTES.md` §5.
+3. **O perfil tem mecanismo.** Ganha em `150–400` e `t>400` (78,6% do peso somados), perde em `t≤50`
+   (3,9%) — exatamente onde 68% das colunas são NaN de warmup e uma regressão linear por folha é
+   instável. É a previsão literal do E0c: o problema é aditivo e suave, e árvores de degraus
+   aproximam curvas suaves com escadinhas.
+
+**O que falta antes de virar decisão: a réplica na partição 43.** A variância de partição é ~0,007,
+2,6× o efeito medido, e este projeto já adotou e retratou um braço em 24 h (a costura C5, §14.3) por
+pular exatamente esse passo. Em treino em `scripts/run_polimento_fase4.sh`.
+
+**E se passar, ainda não entra sozinho:** o par `D1 + A3b` (`p10_combo`) precisa ser medido junto,
+porque a não-aditividade já apareceu três vezes neste repo (V5+mrep, B6+C6 parcial, e agora o `mrep_`
+evaporando de +0,0042 para +0,0008 no §15.13).
+
+### 15.15 ERRATA aos §15.13 e §15.11 — barra de adoção ≠ barra de manutenção
+
+Os §15.13 e §15.11 foram escritos sugerindo que o `mrep_` seria "peso morto provável" e que o
+X1-soft "deixa de passar a regra do R0". **As duas formulações estão erradas como base para agir**, e
+ficam retificadas aqui. Os números permanecem; a leitura muda.
+
+**1. Valor marginal contra o pacote final subestima o componente.** Toda mudança deste projeto foi
+medida contra a base que existia quando entrou. Reavaliar cada uma contra tudo o que veio depois e
+podar as que "não pagam mais" leva a **zero features por indução** — a certa altura a contribuição
+marginal de qualquer peça contra todas as outras é pequena. Isso é redundância entre contribuições
+correlacionadas, não inutilidade. O `mrep_` valer +0,0042 sobre o V4 e +0,0008 sobre o pacote atual é
+o comportamento **esperado** de um componente correlacionado, não sintoma de que ele não serve.
+
+**2. A barra de adoção não é a barra de manutenção.** Acrescentar custa complexidade, latência e
+risco novos, e por isso precisa se justificar com IC excluindo 0. Manter algo já construído, testado,
+empacotado e verificado bit-a-bit **não custa nada de novo**; **remover** custa retreino,
+reverificação, e o risco de a estimativa marginal estar errada. Aplicar o mesmo limiar às duas
+operações enviesa sistematicamente para desfazer o que funciona.
+
+**3. "IC inclui 0" não é evidência de efeito nulo.** É ausência de evidência de efeito. O X1-soft
+segue com ponto **+0,0031, acima da barra**, e o IC apenas encosta em zero (−0,0002).
+
+**4. Coerência interna.** O §15.9 desta mesma campanha estabeleceu que Δ em K=2 **ordena braços mas
+não estima efeitos** (o A3b caiu de +0,0024 para +0,0010 ao ganhar sementes). O +0,0008 do `mrep_` é
+um número de **K=2** — usá-lo como veredito sobre um componente adotado com IC excluindo 0 é aplicar
+a régua que a própria campanha acabara de desmontar.
+
+**O que os dois resultados de fato estabelecem, e só isso:**
+- §15.13 — auditoria de fidelidade: **os números do incumbente descrevem o pipeline implantado**
+  (Δ +0,0008, indistinguível de 0). O `p1_deploy193` passou. Nenhuma implicação sobre o conjunto de
+  features.
+- §15.11 — achado de **método**: a correção de grade **reordena** os braços em vez de deslocá-los
+  igualmente, o que importa para decisões **futuras**. Nenhuma implicação sobre desfazer adoções.
+
+**Regra a herdar:** a reauditoria de grade serve para **calibrar como medir daqui em diante**, não
+para reabrir o que já está em produção. Reabrir uma adoção exige um braço próprio, com a mesma
+disciplina de qualquer outro (K=4, duas partições) — e com a barra invertida, porque quem propõe a
+remoção é quem tem de mostrar que ela não custa.
+
+### 15.16 ERRATA ao §15.14 — a "refutação" do D1 na partição 43 era INCONCLUSIVA
+
+O §15.14 e a retratação que o seguiu trataram um número da partição 43 como refutação do D1. **Foi um
+erro de método**, e o registro fica corrigido aqui.
+
+**O que foi comparado:**
+
+| | precisão | Δ | IC |
+|---|---|---|---|
+| partição 42 | **K=4** | +0,0027 | [+0,0002; +0,0049] |
+| partição 43 | **K=2** | −0,0019 | **nenhum** |
+
+**Por que isso não decide nada.** O ruído de semente que o bootstrap pareado **não enxerga** é
+dp ≈ 0,0041 por modelo de semente única (§5 do `NOTAS_AGENTES.md`); num bag K=2 fica ~0,0029 por
+lado, e a diferença pareada de dois bags K=2 carrega ~0,004 de ruído extra. Logo **−0,0019 ± ~0,004 é
+compatível com o efeito verdadeiro ser +0,002.** Aquele número estabelece *inconclusivo*, não
+refutação — e a própria campanha já tinha medido esse efeito: o A3b se moveu 0,0014 só ao ir de K=2
+para K=4.
+
+**O erro de fundo é uma assimetria de padrão probatório:** exigir K=4 com IC excluindo 0 para
+**adotar**, e aceitar um ponto de K=2 sem IC para **rejeitar**. É o mesmo erro do §15.15 (barra de
+adoção usada como barra de manutenção) em outra roupa. Evidência mais fraca não derruba evidência
+mais forte só por ser mais nova e negativa.
+
+**Estado correto do D1: INCONCLUSIVO.** Fica `false` em produção — não porque foi refutado, mas
+porque não há evidência suficiente para mexer, e o default seguro quando a evidência é genuinamente
+mista é não mexer. `scripts/run_d1_part43_k4.sh` leva a partição 43 a K=4 dos dois lados, que é a
+única comparação que decide.
+
+**Nota sobre o A2, para calibrar futuras leituras deste relatório.** A correção de grade é sustentada
+por validação externa (prevê dois placares que não foram usados para construí-la, com erro caindo de
+~0,011 para ~0,002). Mas o enquadramento de que ela "reordena o significado de quase todo número do
+projeto" foi **inflado**. O que a reauditoria mostrou é majoritariamente **confirmatório**: B6
+melhorou, C6 não mudou, X1-soft enfraqueceu mas seguiu com ponto acima da barra, e o E0c inverteu —
+uma conclusão *pessimista* que caiu. **Nenhuma melhoria anterior foi desprovada.**
+
+### 15.17 O par D1+A3b é PIOR que o D1 sozinho — a quarta não-aditividade
+
+`p10_combo` (linear_tree + base_rate_weighted) contra o D1 sozinho, K=2, partição 42, grade do board:
+
+| bucket | Δ (par − D1 sozinho) | IC 95% | |
+|---|---|---|---|
+| geral | −0,0018 | [−0,0063; +0,0019] | inconclusivo |
+| `t≤50` | +0,0152 | [−0,0047; +0,0305] | 3,9% do peso |
+| `150–400` | −0,0021 | [−0,0073; +0,0024] | |
+| **`t>400`** | **−0,0069** | **[−0,0121; −0,0021]** | **EXCLUI 0** |
+
+Acrescentar o A3b ao D1 **piora significativamente o bucket de maior peso** (31,9%). O perfil explica:
+o A3b mexe no tratamento de `f(t)`, então redistribui desempenho ao longo de `t` — ganha em `t≤50` e
+perde em `t>400`. Sob os pesos do board é um trade ruim.
+
+**Quarta ocorrência de não-aditividade neste repo**, e já dá para tratar como regra em vez de
+surpresa: V5+mrep (−0,0024), B6+C6 (só ~70% aditivo), `mrep_` caindo de +0,0042 para +0,0008 sobre a
+base atual, e agora este. **Duas mudanças positivas isoladas não somam aqui.** Combinar tem de ser
+medido, nunca assumido — e o pacote final da campanha precisa ser medido INTEIRO, como o
+`CAMPANHA_POLIMENTO.md` já previa na semana 7.
+
+**Consequência:** se o D1 sobreviver à réplica na partição 43, entra **sozinho**.
+
+### 15.18 O gate do pacote: D1+B3 são aditivos (+0,0035, IC exclui 0)
+
+O §15.17 fechou pedindo que o pacote fosse medido inteiro. Foi, na partição 42, grade do board:
+candidato = `linear_tree` (K=4) + v-EMA assimétrico com gate `min_t=50`, baseline =
+`oof_b6c6_joint_bag4`.
+
+| bucket | Δ | IC 95% | exclui 0 | peso |
+|---|---|---|---|---|
+| **geral** | **+0,0035** | **[+0,0008; +0,0057]** | **sim** | 100% |
+| `t≤50` | −0,0041 | [−0,0141; +0,0070] | não | 3,9% |
+| `50<t≤150` | +0,0006 | [−0,0051; +0,0051] | não | 17,5% |
+| **`150<t≤400`** | **+0,0052** | **[+0,0021; +0,0078]** | **sim** | 46,7% |
+| **`t>400`** | **+0,0033** | **[+0,0003; +0,0067]** | **sim** | 31,9% |
+
+TS-AUC **0,6277 → 0,6312**. D1 (+0,0027) + B3 (+0,0008) = +0,0035 — **exatamente o medido**.
+
+Depois de quatro não-aditividades seguidas, esta é a primeira combinação do projeto que soma. O que
+mudou não foi a sorte: as quatro anteriores combinavam mudanças que disputavam o **mesmo** mecanismo
+(features redundantes, dois tratamentos de `f(t)`), enquanto aqui uma muda a **forma da folha** e a
+outra é **pós-processo sobre a sequência de scores** — operam em estágios diferentes do pipeline. Não
+é regra geral, mas é uma heurística melhor que "combinar é imprevisível".
+
+Ressalvas: o artefato do `linear_tree` é K=4 e o YAML embute K=7 (o +0,0035 é **piso**, não estimativa
+central), e a réplica na partição 43 continua devendo.
+
+### 15.19 `linear_tree` quebrava a fusão de boosters — o defeito que só a produção via
+
+Ao regenerar o notebook de submissão com o pacote aprovado, o `verify_submission_notebook.py` falhou
+**no pacote real**, não no notebook:
+
+```
+RuntimeError: fuse_boosters: fusão INVÁLIDA (max |raw_fundido - media_raws| = 1.521e+02 > 1e-09)
+```
+
+`fuse_boosters` concatena as árvores de K boosters e divide as folhas por K — exato **enquanto a folha
+é uma constante**, porque o raw do LightGBM é uma soma sobre árvores. Com `linear_tree=true` a folha
+vale `leaf_const + Σ leaf_coeff_i · x_i`, e é por esses campos que o LightGBM prediz quando
+`is_linear=1`. O `_scale_leaves` escalava só `leaf_value`, deixando `leaf_const` e **35.318
+coeficientes por booster** intactos.
+
+**Por que passou despercebido por um dia inteiro de medições.** O OOF nunca funde: `scripts/train.py`
+faz média das **predições** por semente (`avg_oof.py`). A fusão existe só no caminho de **produção**
+(`adapter/platform.py:train`, que treina do zero na nuvem). **Todo o +0,0027 do D1 foi medido num
+caminho que a produção não usa.**
+
+É a **terceira ocorrência da classe A3** ("o que é medido ≠ o que é implantado") e a primeira com
+consequência fatal: o `train()` na nuvem teria levantado `RuntimeError` e derrubado a submissão
+inteira. As duas anteriores (193 vs 187 features; `init_score` descasado) eram vieses de estimativa;
+esta era uma falha dura.
+
+**A guarda numérica fez o seu trabalho.** O docstring dela — *"falhar alto é infinitamente melhor que
+submeter um modelo corrompido"* — descreve exatamente o que aconteceu. Sem ela, a fusão devolveria em
+silêncio um modelo que não representa a média dos originais.
+
+**Correção:** escalar `leaf_const` e `leaf_coeff` junto com `leaf_value` (exata pelo mesmo argumento
+de linearidade que já justificava a fusão). `leaf_features` fica de fora — são **índices** de coluna —
+e `leaf_count`/`leaf_weight` também, que são contagens.
+
+| caminho | antes | depois |
+|---|---|---|
+| folhas lineares (5 folds do `p3_lintree`) | **1,1e+02** | **1,1e−13** |
+| folhas constantes (regressão) | 4,0e−15 | 4,0e−15 (intocado) |
+
+Coberto por `tests/unit/test_fuse_linear_tree.py` (os dois modos de folha, mais uma asserção de que as
+árvores lineares do teste têm coeficientes de verdade — sem ela, folhas degeneradas fariam o teste
+passar sem exercitar o caminho do D1).
+
+**Lição de processo, e a mais cara desta campanha:** a verificação bit-a-bit era tratada como portão
+de **empacotamento**, rodada no fim. Ela é, de fato, o único ponto do projeto que exercita o caminho
+de produção — logo é portão de **adoção**. Um flag novo deveria passar por ela **antes** de entrar no
+`default.yaml`, não depois. Ver `PROXIMA_SEMANA.md`, item 1-bis.

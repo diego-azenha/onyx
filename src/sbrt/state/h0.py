@@ -210,7 +210,15 @@ def fit_h0(hist: np.ndarray, cfg: "Config") -> H0Params:
     # `AccumulatorBlock.reset` exigem um `H0Params` de verdade. Por isso o objeto é montado primeiro
     # com `null_stats={}` e completado aqui — `replace` devolve uma cópia, então a imutabilidade
     # (bloqueio B2: não existe `.refit()`) continua valendo.
-    return replace(params, null_stats=compute_null_stats(e_hist, params, cfg))
+    #
+    # A6 (CAMPANHA_POLIMENTO.md): o replay recebe o histórico CLIPADO pelo mesmo `cfg.h0.clip_e` que
+    # `whiten_step` aplica online. Sem isso o nulo de toda coluna `_cal` é estimado numa escala que a
+    # produção nunca vê: a estatística observada é comprimida em [-8,8] e o nulo dela não é, então o
+    # z-score fica enviesado exatamente nas séries de cauda pesada. MEDIDO: o clip morde em 7,50% das
+    # séries (6,99% das linhas positivas contra 2,64% das negativas). `null_clip_match: false`
+    # reproduz o comportamento histórico.
+    e_hist_null = np.clip(e_hist, *cfg.h0.clip_e) if cfg.h0.null_clip_match else e_hist
+    return replace(params, null_stats=compute_null_stats(e_hist_null, params, cfg))
 
 
 def seed_lag_buffer(params: H0Params) -> RingBuffer:

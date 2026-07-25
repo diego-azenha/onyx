@@ -70,8 +70,13 @@ def default_blocks() -> list:
     # SEPARADOS (poda +0,0027, BOCPD +0,0029) -- este braco isola o BOCPD sobre o V4. Como o mesmo
     # `default_blocks()` alimenta a build de treino E a inferencia (adapter/platform.py), a variavel
     # tem de estar setada nos DOIS contextos, ou scorer e modelo deixam de casar (feature_schema).
-    if os.environ.get("SBRT_ENABLE_BOCPD") == "1":
-        blocks.append(BOCPDBlock())
+    # C6 — BOCPD LIGADO EM PRODUCAO (decisao do usuario, 2026-07-24). O bloco emite 4 colunas
+    # `bocpd_*` => 187 features. A medicao ficou ABAIXO da barra como acrescimo ao B6 (+0,0014, IC
+    # [-0,0008, +0,0033] inclui 0; `t>400` vai a +0,0000) e nao foi replicada na particao 43 --
+    # ver HISTORICO.md §14.9 para o registro completo. Entra assim mesmo, por decisao explicita.
+    # `state/bocpd.py` PRECISA estar em `MODULES` no build_submission_notebook.py, senao o notebook
+    # achatado fica com `BOCPDBlock` indefinido.
+    blocks.append(BOCPDBlock())
     # Base: o conjunto do V4 (docs/HISTORICO.md §1), 183 colunas, + o MultiRepBlock = 189.
     #
     # `state/spectral.py` (8 colunas) e `state/ordinal.py` (5) foram medidos no MESMO ciclo, pela
@@ -203,6 +208,6 @@ class StreamScorer:
 
         feats = self.update_features(x)
         p = self.ensemble.predict_one(feats) if self.ensemble is not None else fallback_score(feats, self.cfg)
-        score = apply_monotonicity(p, self._prev_score, self.cfg.postprocess.mode, self.cfg)
+        score = apply_monotonicity(p, self._prev_score, self.cfg.postprocess.mode, self.cfg, self.t)
         self._prev_score = score
         return score

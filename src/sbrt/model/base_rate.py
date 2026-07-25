@@ -17,12 +17,22 @@ from __future__ import annotations
 import numpy as np
 
 
-def fit_base_rate_curve(t: np.ndarray, y: np.ndarray, bin_width: int = 20, pseudo_count: float = 10.0) -> dict:
+def fit_base_rate_curve(
+    t: np.ndarray, y: np.ndarray, bin_width: int = 20, pseudo_count: float = 10.0,
+    weights: np.ndarray | None = None,
+) -> dict:
     """p_hat(t) por bins de largura `bin_width`, com suavização aditiva (pseudo_count em direção a
     0.5) para bins esparsos em t alto não colapsarem para 0/1. Retorna centros e taxas para
-    interpolação linear em `predict_base_rate_logit`."""
+    interpolação linear em `predict_base_rate_logit`.
+
+    `weights` (A3b, CAMPANHA_POLIMENTO.md) — ajusta a curva sob os MESMOS pesos de linha do treino,
+    em vez da contagem crua. O `init_score` só remove de fato o componente-f(t) do alvo se for a
+    taxa-base do problema que o LightGBM realmente otimiza, e esse problema é PONDERADO desde o R1.
+    Ver a nota medida em `config.py:LightGBMConfig.base_rate_weighted`. `None` = comportamento
+    histórico (contagem não ponderada)."""
     t = np.asarray(t, dtype=np.float64)
     y = np.asarray(y, dtype=np.float64)
+    w = np.ones_like(y) if weights is None else np.asarray(weights, dtype=np.float64)
     max_t = int(np.ceil(t.max())) if len(t) else 1
     edges = np.arange(0, max_t + bin_width, bin_width, dtype=np.float64)
     bin_idx = np.clip(np.digitize(t, edges) - 1, 0, len(edges) - 2)
@@ -30,10 +40,12 @@ def fit_base_rate_curve(t: np.ndarray, y: np.ndarray, bin_width: int = 20, pseud
     centers, rates = [], []
     for b in range(len(edges) - 1):
         mask = bin_idx == b
-        n = int(mask.sum())
-        if n == 0:
+        if not mask.any():
             continue
-        pos = float(y[mask].sum())
+        # `n` é a massa de peso do bin (= contagem quando weights=None), para que a
+        # pseudo-contagem continue significando "10 observações de peso médio".
+        n = float(w[mask].sum())
+        pos = float((w[mask] * y[mask]).sum())
         rate = (pos + pseudo_count * 0.5) / (n + pseudo_count)
         centers.append(float((edges[b] + edges[b + 1]) / 2.0))
         rates.append(rate)

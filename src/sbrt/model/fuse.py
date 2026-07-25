@@ -36,12 +36,34 @@ def _split(model_str: str) -> tuple[str, str, str]:
     return model_str[: i + 1], model_str[i + 1 : j + 1], model_str[j + 1 :]
 
 
-def _scale_leaves(block: str, k: int) -> str:
-    def repl(m: "re.Match") -> str:
-        vals = [float(v) / k for v in m.group(1).split()]
-        return "leaf_value=" + " ".join(repr(v) for v in vals)
+# Campos de folha que carregam a SAÍDA da árvore e portanto têm de ser divididos por k.
+#
+# `leaf_value` sozinho bastava enquanto as folhas eram constantes. Com `linear_tree=true` (D1,
+# adotado em 2026-07-25) cada folha passa a valer `leaf_const + Σ leaf_coeff_i · x_i`, e o LightGBM
+# prediz por ESSES campos quando `is_linear=1` — `leaf_value` vira um resumo que a predição ignora.
+# Escalar só `leaf_value` deixava 35.318 coeficientes por booster intactos e produzia um fundido com
+# erro de 1,1e+02 contra a média dos raws (pego pelo `verify` abaixo, que existe exatamente para
+# isto). Escalando os três, o erro volta a 5,7e-14 — o mesmo regime de ruído de float64 do caso
+# constante.
+#
+# `leaf_features` NÃO entra: são ÍNDICES de coluna, não coeficientes. `leaf_count`/`leaf_weight`
+# também não: são contagens de amostra. Dividi-los corromperia o modelo em silêncio.
+_CAMPOS_ESCALAVEIS = ("leaf_value", "leaf_const", "leaf_coeff")
 
-    return re.sub(r"leaf_value=([^\n]+)", repl, block)
+
+def _scale_leaves(block: str, k: int) -> str:
+    for campo in _CAMPOS_ESCALAVEIS:
+
+        def repl(m: "re.Match", campo: str = campo) -> str:
+            vals = m.group(1).split()
+            if not vals:  # `leaf_coeff=` vem vazio nas árvores que degeneraram para folha constante
+                return f"{campo}="
+            return f"{campo}=" + " ".join(repr(float(v) / k) for v in vals)
+
+        # Âncoras de linha (^…$ com MULTILINE) e não busca livre: sem elas, um campo cujo nome seja
+        # sufixo de outro casaria no lugar errado.
+        block = re.sub(rf"^{campo}=([^\n]*)$", repl, block, flags=re.M)
+    return block
 
 
 def fuse_boosters(boosters: list, verify: bool = True, tol: float = 1e-9) -> lgb.Booster:

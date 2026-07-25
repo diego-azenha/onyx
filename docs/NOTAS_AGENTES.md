@@ -222,18 +222,40 @@ partição fixa, então um IC que exclui 0 continua condicionado à partição e
 bucket que a motivava **trocou de sinal** entre partições. Vale sobretudo quando a decisão se apoia em
 UM bucket.
 
-**Onde a métrica realmente paga** (medido 2026-07-21, `docs/BACKLOG_TSAUC.md`):
+**Onde a métrica realmente paga.** ⚠️ **A tabela de 2026-07-21 media a GRADE ERRADA. Corrigida em
+2026-07-25 (A6/A2 de `CAMPANHA_POLIMENTO.md`, `scripts/a2_full_grid_ts_auc.py`).**
 
-| bucket | peso | TS-AUC |
-|---|---|---|
-| 1–50 | **8,1%** | 0,5357 |
-| 51–150 | 26,6% | 0,5799 |
-| **151–400** | **48,7%** | 0,6242 |
-| 401+ | 16,5% | 0,6529 |
+O OOF vive na grade com thinning (`configs/default.yaml:thinning`: todos os `t` até 100, passo 2 em
+101–400, passo 4 em 401+) — 399 valores de `t`. O board avalia **todos** os ~999 passos. `AUC_t` em
+cada passo retido é exato (o thinning descarta passos, nunca séries — verificado: as contagens
+`n_pos`/`n_neg` por passo batem com `y_train.parquet` casa a casa), **mas o agregado não é**: cada `t`
+retido entra com o próprio `w_t` em vez da massa do bloco que representa, o que subamostra 401+ por
+~2× contra 151–400.
 
-`t≤50` é o bucket mais fraco e o de menor alavancagem: +0,05 ali rende +0,004 no agregado, abaixo de
-2 desvios do bootstrap pareado (~0,006). **Declarar `t≤50` como bucket-alvo torna o sucesso
-indetectável.** Salvo motivo específico, declarar `151–400` (49% do peso) ou `51–400` (75%).
+| bucket | peso na grade de treino (o que se media) | **peso no BOARD (correto)** | TS-AUC |
+|---|---|---|---|
+| 1–50 | 8,1% | **3,9%** | 0,5359 |
+| 51–150 | 26,6% | **17,5%** | 0,5818 |
+| **151–400** | 48,7% | **46,7%** | 0,6312 |
+| **401+** | 16,5% | **31,9%** | 0,6592 |
+
+**Consequências, em ordem de gravidade:**
+
+1. **O "câmbio OOF→board de +0,013" nunca existiu — era a grade.** Reponderado, o OOF prevê o placar
+   com erro de ~0,002 (V4 `5e42ff5`: 0,6227 vs board 0,6201; incumbente B6+C6: 0,6278 vs 0,6267). O
+   nível local passou a ser comparável com o placar, o que a §9.0 dizia ser impossível.
+2. **Todo braço cujo ganho vive em `t>400` foi subcreditado por ~2×; todo braço que ganha em `t≤150`,
+   supercreditado por ~1,5–2×.** O caso extremo é o E0c (o experimento que fundamentou o veredito de
+   "beco sem saída"): o Δ das interações passa de **+0,0039, IC [−0,0015; +0,0100] (inclui 0)** para
+   **+0,0104, IC [+0,0056; +0,0157] (exclui 0)**. A conclusão "`g` está saturado" **não sobrevive à
+   correção** — capacidade voltou a ser o braço de melhor mecanismo.
+3. `t≤50` é ainda menos alavancado do que se pensava (3,9%, não 8,1%): +0,05 ali rende +0,002 no
+   agregado. **Declarar `t≤50` como bucket-alvo continua tornando o sucesso indetectável.** O bucket
+   de maior peso agregado passa a ser `151–400` + `401+` = **78,6%**.
+
+**`scripts/compare_oof.py` agora usa `--grid full` por default** (`w_mult` de
+`evaluation/ts_auc.py:board_grid_multipliers`); `--grid thin` existe só para reauditar números
+antigos. `scripts/a2_reaudit.py` reroda os pares que decidiram o projeto nas duas ponderações.
 
 ### 5.1 Rastreios baratos — rodar ANTES de gastar um ciclo de build+treino (~50 min)
 
@@ -369,6 +391,25 @@ séries e 0,8098 num subconjunto de 500. Não existe piloto barato por amostrage
   semente — ver `scripts/run_partb_b6.sh` e `scripts/run_c6_bocpd.sh`.
 - **Ablação de fold único não prevê o ciclo completo.** Já custou uma rodada inteira.
 - Treino do braço rank: ~16 min (5 folds). Suíte de robustez com 200 seeds: perto de uma hora.
+- **UM job pesado por vez — treino concorrente com bootstrap TRAVA (2026-07-25).** Um
+  `scripts/train.py` rodando junto com dois `compare_oof.py` (`--n-jobs -1` ⇒ ~13 workers cada, numa
+  máquina de 12 CPUs lógicas) caiu para **1,2 núcleo efetivo** e depois **deadlocou**: 51 threads em
+  estado *Wait*, 0% de CPU, parado por 1h30 no fold 0. Um fold normal leva **~85 s**. Diagnóstico:
+  `Get-CimInstance Win32_Process` + amostrar `UserModeTime` em dois instantes — se o delta é 0, é
+  deadlock, não lentidão. Mitigação adotada em `scripts/run_polimento.sh`: `OMP_NUM_THREADS=6`,
+  `OMP_WAIT_POLICY=PASSIVE`, saída por arquivo (sem `| tee` no caminho do stderr do `tqdm`), e nunca
+  dois jobs pesados simultâneos. Ao medir durante um treino, usar `--n-jobs 3`.
+- **O wrapper de background é morto, o processo Python NÃO.** Confirmado nos dois sentidos nesta
+  sessão: um `nohup` que se julgou morto continuava vivo (e duplicou a carga, causando a contenção
+  acima), e um `train.py` cujo script pai foi morto **terminou o fold e salvou o artefato**. Antes de
+  relançar, conferir o que de fato está rodando por `Win32_Process`, não por `ps`, que no Git Bash
+  não enxerga os processos Windows.
+- **Não editar um `.sh` enquanto ele executa.** O bash relê o arquivo por offset de bytes durante a
+  execução; editar no meio faz ele saltar para o lugar errado.
+- **`run_arm <nome> <sementes>` nomeia o bag por `wc -w` das sementes** — chamar o mesmo braço duas
+  vezes com 2 sementes cada grava `bag2` duas vezes e a segunda SOBRESCREVE a primeira. Aconteceu com
+  o `p2_brw` (777+101 sobrescrito por 202+303). Os OOFs por semente sobrevivem, então dá para
+  reconstruir; a medição já registrada não é invalidada, mas o arquivo deixa de reproduzi-la.
 
 ---
 

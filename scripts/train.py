@@ -57,6 +57,33 @@ def main() -> None:
                         help="B5: monotone_constraints=+1 nos acumuladores de evidência (LLR).")
     parser.add_argument("--feature-contri-meta", type=float, default=None,
                         help="B6: multiplicador de ganho (0.5-0.7) nas colunas meta_h0_*.")
+    parser.add_argument("--num-leaves", type=int, default=None,
+                        help="E0c (DIAGNOSTICO_ESTRUTURAL.md §5): sobrescreve lightgbm.num_leaves. "
+                             "Com 2 (+ --max-depth 1) o aprendiz vira um TOCO: modelo aditivo puro, "
+                             "sem NENHUMA interacao entre as 183 features. Se a TS-AUC empatar com o "
+                             "incumbente, as interacoes nao contribuem e a base saturou o aprendiz.")
+    parser.add_argument("--max-depth", type=int, default=None,
+                        help="E0c: sobrescreve lightgbm.max_depth (1 = toco; -1 = sem limite).")
+    parser.add_argument("--base-rate-weighted", action="store_true",
+                        help="A3b: ajusta a curva de taxa-base (init_score) sob os MESMOS pesos de "
+                             "linha do treino. Os pesos pareados do R1 equalizam as classes dentro de "
+                             "cada t (taxa ponderada ~0,5), entao a curva nao-ponderada injeta um "
+                             "offset de ate +3,81 em log-odds em vez de remover um.")
+    parser.add_argument("--linear-tree", action="store_true",
+                        help="D1: folhas LINEARES (modelo linear por folha em vez de constante). O E0c "
+                             "mostrou que o problema e aditivo e suave; arvores de degraus aproximam "
+                             "curvas suaves com escadinhas.")
+    parser.add_argument("--max-bin", type=int, default=None,
+                        help="D2: sobrescreve lightgbm.max_bin (255 -> 511/1023). Resolucao do "
+                             "histograma nas caudas dos LLRs, onde a evidencia forte vive.")
+    parser.add_argument("--detect-floor", type=float, default=None,
+                        help="C2: piso do multiplicador de detectabilidade do X1 (w_pos ×= "
+                             "clip(d/q95, floor, 1)). O default 0,3 vinha da assinatura de "
+                             "compute_row_weights, NÃO de cfg.weights.detect_floor -- offline o YAML "
+                             "não alcançava este número, então a vizinhança nunca pôde ser varrida.")
+    parser.add_argument("--set", nargs="*", default=[], metavar="CHAVE=VALOR",
+                        help="D3/D5: sobrescreve qualquer campo escalar de lightgbm (ex.: "
+                             "learning_rate=0.03 min_data_in_leaf=100). Tipado pelo valor atual.")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -82,6 +109,29 @@ def main() -> None:
     if args.feature_contri_meta is not None:
         cfg = replace(cfg, lightgbm=replace(cfg.lightgbm, feature_contri_meta=args.feature_contri_meta))
         print(f"B6: feature_contri={args.feature_contri_meta} em meta_h0_*")
+    if args.num_leaves is not None:
+        cfg = replace(cfg, lightgbm=replace(cfg.lightgbm, num_leaves=args.num_leaves))
+        print(f"num_leaves sobrescrito para {args.num_leaves}")
+    if args.max_depth is not None:
+        cfg = replace(cfg, lightgbm=replace(cfg.lightgbm, max_depth=args.max_depth))
+        print(f"max_depth sobrescrito para {args.max_depth}"
+              f"{' (TOCO: modelo aditivo, sem interacoes)' if args.max_depth == 1 else ''}")
+    if args.base_rate_weighted:
+        cfg = replace(cfg, lightgbm=replace(cfg.lightgbm, base_rate_weighted=True))
+        print("A3b: curva de taxa-base (init_score) ajustada sob os pesos de treino")
+    if args.linear_tree:
+        cfg = replace(cfg, lightgbm=replace(cfg.lightgbm, linear_tree=True))
+        print("D1: linear_tree=true (folhas lineares)")
+    if args.max_bin is not None:
+        cfg = replace(cfg, lightgbm=replace(cfg.lightgbm, max_bin=args.max_bin))
+        print(f"D2: max_bin={args.max_bin}")
+    for kv in args.set:
+        k, _, v = kv.partition("=")
+        cur = getattr(cfg.lightgbm, k)  # KeyError explicito se o campo nao existe
+        cast = type(cur) if cur is not None else float
+        val = (v.lower() in ("1", "true", "yes")) if cast is bool else cast(v)
+        cfg = replace(cfg, lightgbm=replace(cfg.lightgbm, **{k: val}))
+        print(f"--set {k}={val!r} (era {cur!r})")
     rows = pd.read_parquet(args.rows)
     if args.drop_prefix:
         dropped = [c for c in rows.columns if c.startswith(tuple(args.drop_prefix))]
@@ -93,7 +143,11 @@ def main() -> None:
         noisy_ids = set(_f.loc[_f["label_suspect"] == True, "id"].astype(int))  # noqa: E712
         print(f"B3: rebaixando negativos de {len(noisy_ids)} séries flagadas")
     weights = compute_row_weights(rows, cfg, detectability_mode=args.detectability_mode,
+                                  detect_floor=(args.detect_floor if args.detect_floor is not None
+                                                else cfg.weights.detect_floor),
                                   wt_align=args.wt_align, noisy_neg_ids=noisy_ids)
+    if args.detect_floor is not None:
+        print(f"C2: detect_floor={args.detect_floor}")
     if args.detectability_mode != "none":
         print(f"X1: pesos de detectabilidade modo={args.detectability_mode}")
     if args.wt_align:

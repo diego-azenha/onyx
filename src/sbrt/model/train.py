@@ -134,10 +134,15 @@ def train(rows: pd.DataFrame, weights: np.ndarray, cfg, progress: bool = True) -
     y = rows["y"].to_numpy(dtype=np.int32)
     t_values = rows["t"].to_numpy(dtype=np.float64)
 
-    base_rate_curve = fit_base_rate_curve(t_values, y.astype(np.float64))
-    init_score_full = predict_base_rate_logit(t_values, base_rate_curve)
-
     lgb_cfg = cfg.lightgbm
+    # A3b: sob `base_rate_weighted`, a curva é ajustada com os mesmos pesos que o LightGBM usa, e não
+    # na contagem crua -- ver config.py:LightGBMConfig.base_rate_weighted para o descasamento medido
+    # (até +3,81 em log-odds) que isto corrige.
+    base_rate_curve = fit_base_rate_curve(
+        t_values, y.astype(np.float64),
+        weights=weights if getattr(lgb_cfg, "base_rate_weighted", False) else None,
+    )
+    init_score_full = predict_base_rate_logit(t_values, base_rate_curve)
     params = dict(
         objective="binary",
         metric="None",  # R2: métricas internas desligadas -- o feval custom cobre AUC-por-t
@@ -172,6 +177,14 @@ def train(rows: pd.DataFrame, weights: np.ndarray, cfg, progress: bool = True) -
         params["feature_contri"] = [
             lgb_cfg.feature_contri_meta if c.startswith("meta_h0") else 1.0 for c in feature_cols
         ]
+
+    # D1/D3 (CAMPANHA_POLIMENTO.md): knobs estruturais do aprendiz, off por default.
+    if getattr(lgb_cfg, "linear_tree", False):
+        params["linear_tree"] = True
+    if getattr(lgb_cfg, "dart", False):
+        params["boosting"] = "dart"
+    if not getattr(lgb_cfg, "enable_bundle", True):
+        params["enable_bundle"] = False
 
     boosters = []
     fold_evals = []
@@ -301,11 +314,18 @@ def train_rank(rows: pd.DataFrame, cfg, progress: bool = True) -> tuple:
 
     # B5/B6 (BRAINSTORM_RUPTURA_V2.md §2.5/§2.6): regularização estrutural alinhada a `feature_cols`.
     # Gated por cfg (off por default); só o braço binário os liga. Ver scripts/train.py.
+    #
+    # Escreve em `base_params`, não em `params`: aqui `params` só passa a existir DENTRO do laço de
+    # folds (linha ~343, onde recebe `lambdarank_truncation_level`). Escrever nele antes disso levanta
+    # `UnboundLocalError` e derruba `train_rank` inteiro. Ficou latente enquanto os dois knobs eram
+    # off por default, e passou a disparar SEMPRE quando o B6 adotou `feature_contri_meta: 0.6` no
+    # YAML (2026-07-24) — o braço de ranking está quebrado desde então. Achado ao rodar a suíte
+    # completa na campanha de polimento (2026-07-25).
     if getattr(lgb_cfg, "monotone_llr", False):
         _MONO = ("cusum_mean_pos", "cusum_var_up", "conformal_logm_abs_reset", "bayes_lo")
-        params["monotone_constraints"] = [1 if c.startswith(_MONO) else 0 for c in feature_cols]
+        base_params["monotone_constraints"] = [1 if c.startswith(_MONO) else 0 for c in feature_cols]
     if getattr(lgb_cfg, "feature_contri_meta", 1.0) != 1.0:
-        params["feature_contri"] = [
+        base_params["feature_contri"] = [
             lgb_cfg.feature_contri_meta if c.startswith("meta_h0") else 1.0 for c in feature_cols
         ]
 
