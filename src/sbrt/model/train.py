@@ -32,6 +32,34 @@ from sbrt.model.predict import ModelEnsemble, RankModelEnsemble
 _NON_FEATURE_COLS = {"id", "t", "y", "thin_weight"}
 
 
+def _feature_contri(lgb_cfg, feature_cols) -> list[float] | None:
+    """B6 + C1(ii): vetor `feature_contri` do LightGBM, alinhado a `feature_cols`.
+
+    `meta_h0_*` levam `feature_contri_meta` (B6, adotado) -- casamento por PREFIXO. As colunas de
+    `feature_contri_extra_cols` levam `feature_contri_extra` (C1(ii)) -- multiplicador SEPARADO e
+    casamento por NOME EXATO (ver a justificativa em config.py: o prefixo pegaria
+    `conformal_logm_abs_reset`, que é acumulador de evidência, não rastreador de `t`).
+
+    Devolve `None` quando nada está penalizado, para não injetar um vetor de 1.0 nos params (que
+    seria inócuo mas mudaria o dicionário passado ao LightGBM e, com ele, a reprodutibilidade
+    bit-a-bit das medições anteriores).
+    """
+    meta = getattr(lgb_cfg, "feature_contri_meta", 1.0)
+    extra = getattr(lgb_cfg, "feature_contri_extra", 1.0)
+    cols = frozenset(getattr(lgb_cfg, "feature_contri_extra_cols", ()) or ())
+    if meta == 1.0 and (extra == 1.0 or not cols):
+        return None
+    out = []
+    for c in feature_cols:
+        if c.startswith("meta_h0"):
+            out.append(meta)
+        elif c in cols:
+            out.append(extra)
+        else:
+            out.append(1.0)
+    return out
+
+
 def _make_fold_feval(
     t_valid: np.ndarray, max_rows: int | None, seed: int, raw_to_prob: bool = False, stopping_metric: str = "logloss"
 ):
@@ -173,10 +201,9 @@ def train(rows: pd.DataFrame, weights: np.ndarray, cfg, progress: bool = True) -
     if getattr(lgb_cfg, "monotone_llr", False):
         _MONO = ("cusum_mean_pos", "cusum_var_up", "conformal_logm_abs_reset", "bayes_lo")
         params["monotone_constraints"] = [1 if c.startswith(_MONO) else 0 for c in feature_cols]
-    if getattr(lgb_cfg, "feature_contri_meta", 1.0) != 1.0:
-        params["feature_contri"] = [
-            lgb_cfg.feature_contri_meta if c.startswith("meta_h0") else 1.0 for c in feature_cols
-        ]
+    _contri = _feature_contri(lgb_cfg, feature_cols)
+    if _contri is not None:
+        params["feature_contri"] = _contri
 
     # D1/D3 (CAMPANHA_POLIMENTO.md): knobs estruturais do aprendiz, off por default.
     if getattr(lgb_cfg, "linear_tree", False):
@@ -324,10 +351,9 @@ def train_rank(rows: pd.DataFrame, cfg, progress: bool = True) -> tuple:
     if getattr(lgb_cfg, "monotone_llr", False):
         _MONO = ("cusum_mean_pos", "cusum_var_up", "conformal_logm_abs_reset", "bayes_lo")
         base_params["monotone_constraints"] = [1 if c.startswith(_MONO) else 0 for c in feature_cols]
-    if getattr(lgb_cfg, "feature_contri_meta", 1.0) != 1.0:
-        base_params["feature_contri"] = [
-            lgb_cfg.feature_contri_meta if c.startswith("meta_h0") else 1.0 for c in feature_cols
-        ]
+    _contri = _feature_contri(lgb_cfg, feature_cols)
+    if _contri is not None:
+        base_params["feature_contri"] = _contri
 
     boosters = []
     fold_evals = []

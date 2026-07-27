@@ -288,6 +288,18 @@ class LightGBMConfig:
     # espúrias com efeitos-fixos quando n_eff~10^4.
     feature_contri_meta: float = 1.0  # B6 (§2.6): multiplicador de ganho de split das colunas meta_h0_*
     # (0,5-0,7 empurra a árvore a usá-las como condicionador, não intercepto por série). 1.0 = desligado.
+    # C1(ii) (CAMPANHA_POLIMENTO.md frente C): o B6 varreu o VALOR do contri, nunca o CONJUNTO de
+    # colunas penalizadas. Estes dois campos estendem a penalização a outros rastreadores de `t` que o
+    # xs-SHAP expôs (`conformal_logm_abs`, `mmd_joint_slow_cal`) com multiplicador PRÓPRIO -- eles não
+    # são metadados de série como as `meta_h0_*`, então compartilhar o valor do B6 seria um chute.
+    #
+    # Casam por NOME EXATO, não por prefixo -- deliberadamente. O prefixo `conformal_logm_abs`
+    # capturaria também `conformal_logm_abs_reset`, que está na lista `_MONO` de restrições
+    # monotônicas (model/train.py), ou seja: o repo o trata como ACUMULADOR DE EVIDÊNCIA, não como
+    # rastreador de `t`. Penalizá-lo junto conflataria o braço com uma mudança de sinal.
+    # Default = tupla vazia + 1.0 => no-op exato.
+    feature_contri_extra_cols: tuple[str, ...] = ()
+    feature_contri_extra: float = 1.0
     early_stopping_metric: str = "logloss"  # "logloss" ou "ts_auc_by_t" -- qual das duas métricas do
     # feval (model/train.py:_make_fold_feval) governa a parada via first_metric_only. MEDIDO
     # (retreino real, 2026-07-20): "ts_auc_by_t" sozinho treina 100-236 rodadas (vs. 61-89 com
@@ -387,6 +399,10 @@ class WeightsConfig:
     detectability_mode: str = "none"     # none|hard|soft|ramp -- 'soft' é a variante adotada
     detect_floor: float = 0.3            # piso do multiplicador suave: w_pos ×= clip(d/q95, floor, 1)
     wt_align: bool = False               # B1/F3: alinhar massa de peso por t com w_t=n_pos·n_neg (braço)
+    # C2(ii): inclui `delta_mean` (deslocamento de nível do resíduo, em desvios pré-τ) na norma L2 que
+    # forma `d_i`. A vizinhança do X1 foi varrida só no eixo do `floor` (0,15 e 0,50, ambos fechados);
+    # este é o segundo braço que a campanha listou e nunca rodou. `false` = X1 adotado, bit-a-bit.
+    detect_include_delta_mean: bool = False
 
 
 @dataclass(frozen=True)

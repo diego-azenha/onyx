@@ -364,7 +364,42 @@ lightgbm:                              # plano §8.3
                                         # TS-AUC OOF real (Delta -0.0099, IC exclui 0); "logloss"
                                         # reproduz o comportamento original, validado neste retreino
                                         # (Delta -0.0014, IC inclui 0 -- indistinguível do baseline).
-  feature_contri_meta: 0.6             # B6, ADOTADO 2026-07-24 (docs/HISTORICO.md §14). Multiplica
+  feature_contri_meta: 0.7             # C1(i), ADOTADO 2026-07-27: 0,6 -> 0,7. Ver o bloco do B6
+                                        # abaixo (o mecanismo e o mesmo; so o valor mudou).
+                                        #
+                                        # MEDIDO na particao 42, grade do board, contra o incumbente
+                                        # do MESMO K (regra do D1: K=4 contra K=4):
+                                        #   K=2  geral +0,0033 [+0,0004; +0,0061]  IC exclui 0
+                                        #   K=4  geral +0,0023 [+0,0001; +0,0044]  IC EXCLUI 0
+                                        #        t>400 +0,0027 [+0,0002; +0,0050]  IC EXCLUI 0
+                                        # Deflacionou ~30% de K=2 para K=4 e SEGUROU acima da barra --
+                                        # o padrao do D1 (+0,0025 -> +0,0027), nao o dos bracos que
+                                        # colapsaram na mesma campanha (A3b +0,0024 -> +0,0010; A6
+                                        # +0,0015 -> +0,0009; contri=0,4 +0,0017 -> +0,0011).
+                                        # O ganho esta em `t>400`, que o A2 mostrou valer 31,9% do
+                                        # peso do board (nao 16,5%).
+                                        #
+                                        # POR QUE ENTRA SEM A REPLICA NA PARTICAO 43 (decisao do
+                                        # usuario, 2026-07-27): a barra alta e a replica obrigatoria
+                                        # existem para conter COMPLEXIDADE E RISCO NOVOS -- §15.15,
+                                        # "barra de adocao != barra de manutencao". Este flag nao traz
+                                        # nenhum dos dois: e o MESMO parametro que ja esta adotado
+                                        # desde o B6, com outro valor. Sem coluna nova, sem latencia,
+                                        # sem mudanca de inferencia. A replica na 43 fica como
+                                        # verificacao POSTERIOR, nao como pre-condicao.
+                                        #
+                                        # RESSALVA HONESTA, para quem reabrir: a curva do contri nao e
+                                        # suave. Em K=2: 0,4 +0,0017 · 0,5 +0,0014 · 0,6 ref ·
+                                        # 0,7 +0,0033 · 0,8 -0,0013. Em K=4, 0,4 da +0,0011 e 0,7 da
+                                        # +0,0023 -- ou seja, os DOIS vizinhos batem o 0,6, o que nao
+                                        # e forma de resposta suave com otimo. Parte disso e ruido de
+                                        # semente (o repo mediu ~0,004 entre dois bags K=2, invisivel
+                                        # ao bootstrap pareado). O que sustenta a adocao e o K=4 com
+                                        # IC excluindo 0 no agregado E no bucket de maior peso, somado
+                                        # a custo zero -- nao a forma da curva.
+                                        #
+                                        # ---- historico do B6 (valor anterior 0,6) ----
+                                        # B6, ADOTADO 2026-07-24 (docs/HISTORICO.md §14). Multiplica
                                         # por 0,6 o ganho de split das colunas `meta_h0_*`: elas
                                         # descrevem o ajuste do H0 DA PROPRIA SERIE (um
                                         # condicionador -- "que tipo de serie e esta"), e o modelo as

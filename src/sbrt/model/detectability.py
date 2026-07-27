@@ -55,21 +55,29 @@ def analyze_series(x_hist: np.ndarray, x_online: np.ndarray, tau_index: int, cfg
     kurt_post = spstats.kurtosis(post_e, fisher=True, bias=False) if len(post_e) > 3 else np.nan
     delta_kurt = float(kurt_post - kurt_pre)
     delta_exceed = float(np.mean(np.abs(post_e) > 2) - np.mean(np.abs(pre_e) > 2))
+    # C2(ii) (CAMPANHA_POLIMENTO.md frente C): deslocamento de NÍVEL do resíduo. Sempre computado --
+    # é uma coluna a mais no censo, inerte enquanto não entrar em `AXES` (ver `estimate_detectability`).
+    # Em unidades do desvio pré-τ, para não deixar a escala bruta de `e` dominar a norma L2 dos eixos.
+    delta_mean_e = float((post_e.mean() - pre_e.mean()) / np.sqrt(var_pre_e))
     return {
         "delta_logvar_e": delta_logvar_e,
         "delta_rho1": float(delta_rho1),
         "delta_kurt": delta_kurt,
         "delta_exceed": delta_exceed,
+        "delta_mean_e": delta_mean_e,
         "n_post": len(post_e),
     }
 
 
-def estimate_detectability(census: pd.DataFrame, t_max: int) -> pd.DataFrame:
+def estimate_detectability(census: pd.DataFrame, t_max: int, axes=None) -> pd.DataFrame:
     """delta_efetivo × √m_bucket, delta_efetivo = norma L2 dos eixos padronizados pelo desvio ENTRE
-    séries. Idêntico a scripts/detectability_report.py:estimate_detectability."""
+    séries. Idêntico a scripts/detectability_report.py:estimate_detectability.
+
+    `axes=None` usa `AXES` (os quatro eixos do censo A1) -- o default reproduz bit-a-bit o X1 adotado.
+    C2(ii) passa `AXES + ("delta_mean_e",)` para medir o braço que a campanha listou e nunca rodou."""
     out = census.copy()
     z = np.zeros(len(out), dtype=np.float64)
-    for axis in AXES:
+    for axis in (AXES if axes is None else tuple(axes)):
         v = out[axis].to_numpy(dtype=np.float64)
         sd = np.nanstd(v)
         if sd > 0:
@@ -106,6 +114,7 @@ def compute_detectability_map(records, cfg, t_max: int = 50, n_jobs: int = 1) ->
     if not rows:
         return pd.DataFrame(columns=["id", "detectability", "tau_index"])
 
-    det = estimate_detectability(pd.DataFrame(rows), t_max)
+    axes = AXES + ("delta_mean_e",) if getattr(cfg.weights, "detect_include_delta_mean", False) else None
+    det = estimate_detectability(pd.DataFrame(rows), t_max, axes=axes)
     det = det[det["m_bucket"] > 0]  # só quebra precoce (τ<t_max), como o experimento
     return det[["id", "detectability", "tau_index"]].reset_index(drop=True)

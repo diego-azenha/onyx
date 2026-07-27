@@ -42,7 +42,7 @@ from sbrt.evaluation.ts_auc import weighted_ts_auc
 AXES = ("delta_logvar_e", "delta_rho1", "delta_kurt", "delta_exceed")
 
 
-def estimate_detectability(census: pd.DataFrame, t_max: int) -> pd.DataFrame:
+def estimate_detectability(census: pd.DataFrame, t_max: int, axes=None) -> pd.DataFrame:
     """delta_efetivo * sqrt(m), com delta_efetivo = norma L2 dos eixos padronizados.
 
     Padronizar cada eixo pelo seu próprio desvio entre séries é o que torna os eixos comparáveis
@@ -55,7 +55,8 @@ def estimate_detectability(census: pd.DataFrame, t_max: int) -> pd.DataFrame:
     que são todas as deste recorte — e embaralha os quintis."""
     out = census.copy()
     z = np.zeros(len(out), dtype=np.float64)
-    for axis in AXES:
+    # C2(ii): `axes=None` reproduz o CSV do X1 adotado bit-a-bit; o braco passa AXES+delta_mean_e.
+    for axis in (AXES if axes is None else tuple(axes)):
         v = out[axis].to_numpy(dtype=np.float64)
         sd = np.nanstd(v)
         if sd > 0:
@@ -77,9 +78,16 @@ def main() -> None:
     parser.add_argument("--t-max", type=int, default=50, help="bucket sob investigação")
     parser.add_argument("--n-deciles", type=int, default=5)
     parser.add_argument("--out", default="artifacts/reports/detectability.csv")
+    parser.add_argument("--extra-axes", nargs="*", default=[], metavar="EIXO",
+                        help="C2(ii): eixos adicionais na norma L2 de d_i (ex.: delta_mean_e). O "
+                             "cabecalho de model/detectability.py registra que o canal de media foi "
+                             "medido como fraco -- este flag existe para MEDIR isso, nao presumir.")
     args = parser.parse_args()
 
-    census = estimate_detectability(pd.read_csv(args.census), args.t_max)
+    _axes = (AXES + tuple(args.extra_axes)) if args.extra_axes else None
+    if args.extra_axes:
+        print(f"C2(ii): eixos = {_axes}")
+    census = estimate_detectability(pd.read_csv(args.census), args.t_max, axes=_axes)
     oof = pd.read_parquet(args.oof).rename(columns={args.score_col: "score"})
 
     early = oof[oof["t"] <= args.t_max]

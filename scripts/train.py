@@ -57,6 +57,15 @@ def main() -> None:
                         help="B5: monotone_constraints=+1 nos acumuladores de evidência (LLR).")
     parser.add_argument("--feature-contri-meta", type=float, default=None,
                         help="B6: multiplicador de ganho (0.5-0.7) nas colunas meta_h0_*.")
+    parser.add_argument("--detectability-path", default="artifacts/reports/detectability.csv",
+                        help="C2(ii): CSV de d_i lido offline. O default e o do X1 adotado; o braco do "
+                             "delta_mean aponta para um CSV gerado com --extra-axes delta_mean_e.")
+    parser.add_argument("--contri-extra-cols", nargs="*", default=[], metavar="COLUNA",
+                        help="C1(ii): estende a penalizacao de feature_contri a estas colunas, por "
+                             "NOME EXATO (ex.: conformal_logm_abs mmd_joint_slow_cal). Sem elas, no-op.")
+    parser.add_argument("--contri-extra", type=float, default=1.0,
+                        help="C1(ii): multiplicador aplicado a --contri-extra-prefixes (default 1.0 "
+                             "= sem penalizacao; independente do --feature-contri-meta).")
     parser.add_argument("--num-leaves", type=int, default=None,
                         help="E0c (DIAGNOSTICO_ESTRUTURAL.md §5): sobrescreve lightgbm.num_leaves. "
                              "Com 2 (+ --max-depth 1) o aprendiz vira um TOCO: modelo aditivo puro, "
@@ -109,6 +118,13 @@ def main() -> None:
     if args.feature_contri_meta is not None:
         cfg = replace(cfg, lightgbm=replace(cfg.lightgbm, feature_contri_meta=args.feature_contri_meta))
         print(f"B6: feature_contri={args.feature_contri_meta} em meta_h0_*")
+    if args.contri_extra_cols:
+        cfg = replace(cfg, lightgbm=replace(
+            cfg.lightgbm,
+            feature_contri_extra_cols=tuple(args.contri_extra_cols),
+            feature_contri_extra=args.contri_extra,
+        ))
+        print(f"C1(ii): feature_contri={args.contri_extra} em {list(args.contri_extra_cols)}")
     if args.num_leaves is not None:
         cfg = replace(cfg, lightgbm=replace(cfg.lightgbm, num_leaves=args.num_leaves))
         print(f"num_leaves sobrescrito para {args.num_leaves}")
@@ -143,6 +159,7 @@ def main() -> None:
         noisy_ids = set(_f.loc[_f["label_suspect"] == True, "id"].astype(int))  # noqa: E712
         print(f"B3: rebaixando negativos de {len(noisy_ids)} séries flagadas")
     weights = compute_row_weights(rows, cfg, detectability_mode=args.detectability_mode,
+                                  detectability_path=args.detectability_path,
                                   detect_floor=(args.detect_floor if args.detect_floor is not None
                                                 else cfg.weights.detect_floor),
                                   wt_align=args.wt_align, noisy_neg_ids=noisy_ids)
