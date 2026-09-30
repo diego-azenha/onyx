@@ -157,7 +157,7 @@ def train(rows: pd.DataFrame, weights: np.ndarray, cfg, progress: bool = True) -
     duplicar barra de progresso, plano §8 regra tqdm). Retorna (ModelEnsemble, oof_pred) — oof_pred
     é a probabilidade calibrada out-of-fold por linha, alinhada a `rows` (diagnóstico A4, não faz
     parte do artefato salvo)."""
-    feature_cols = sorted(c for c in rows.columns if c not in _NON_FEATURE_COLS)
+    feature_cols = sorted(c for c in rows.columns if c not in _NON_FEATURE_COLS and not c.startswith("y_soft"))
     X = rows[feature_cols].to_numpy(dtype=np.float32)  # plano §8.1: float32 no dataset de treino
     y = rows["y"].to_numpy(dtype=np.int32)
     t_values = rows["t"].to_numpy(dtype=np.float64)
@@ -222,7 +222,11 @@ def train(rows: pd.DataFrame, weights: np.ndarray, cfg, progress: bool = True) -
     fold_iter = tqdm(folds, desc="treinando folds") if progress else folds
 
     use_pairwise = getattr(lgb_cfg, "pairwise_alpha", 0.0) > 0.0
-    for train_idx, valid_idx in fold_iter:
+    # Passo 2 do roteiro de 30/09 (knowledge/frentes/roteiro-30-09/P2-professor-aluno.md): rótulo suave
+    # por fold vindo de um professor com informação privilegiada (nested cross-fit, scripts/p2_professor.py).
+    # Só o rótulo de TREINO muda; pesos, curva de taxa-base, feval e OOF seguem o `y` verdadeiro.
+    use_soft = bool(getattr(lgb_cfg, "soft_label", False))
+    for k_fold, (train_idx, valid_idx) in enumerate(fold_iter):
         params_use = params
         if use_pairwise:
             ytr = y[train_idx]; ttr = t_values[train_idx].astype(np.int64)
@@ -233,8 +237,17 @@ def train(rows: pd.DataFrame, weights: np.ndarray, cfg, progress: bool = True) -
             dtrain = lgb.Dataset(X[train_idx], label=ytr, init_score=init_score_full[train_idx])  # weight embutido no fobj
             params_use = {**params, "objective": fobj}  # objetivo custom substitui "binary"
         else:
+            label_tr = y[train_idx]
+            if use_soft:
+                col = f"y_soft_f{k_fold}"
+                if col not in rows.columns:
+                    raise KeyError(f"soft_label ligado mas {col} não existe em rows (rode scripts/p2_professor.py)")
+                mix = float(getattr(lgb_cfg, "soft_label_mix", 0.5))
+                soft = rows[col].to_numpy(dtype=np.float64)[train_idx]
+                label_tr = np.where(y[train_idx] == 1, (1.0 - mix) * 1.0 + mix * soft, 0.0)
+                params_use = {**params, "objective": "cross_entropy"}
             dtrain = lgb.Dataset(
-                X[train_idx], label=y[train_idx], weight=weights[train_idx], init_score=init_score_full[train_idx]
+                X[train_idx], label=label_tr, weight=weights[train_idx], init_score=init_score_full[train_idx]
             )
         dvalid = lgb.Dataset(
             X[valid_idx],
@@ -327,7 +340,7 @@ def train_rank(rows: pd.DataFrame, cfg, progress: bool = True) -> tuple:
     `thin_weight` normalizado: o desbalanceamento de classe intra-t já é tratado estruturalmente pela
     perda pareada (cada par (pos,neg) do grupo contribui um termo de gradiente) -- aplicar também os
     pesos classe-balanceados de R1 (model/weights.py) duplicaria esse efeito."""
-    feature_cols = sorted(c for c in rows.columns if c not in _NON_FEATURE_COLS)
+    feature_cols = sorted(c for c in rows.columns if c not in _NON_FEATURE_COLS and not c.startswith("y_soft"))
     X_full = rows[feature_cols].to_numpy(dtype=np.float32)
     y_full = rows["y"].to_numpy(dtype=np.int32)
     t_full = rows["t"].to_numpy(dtype=np.int64)

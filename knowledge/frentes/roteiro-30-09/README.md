@@ -11,10 +11,10 @@ Incumbente: **E1 = 0,6349** OOF (partição 42, K=4).
 |---|---|---|
 | 0 | Premissa 2, empates em float32, fechar V4/V8 | **concluído**: premissa 2 corrigida; float32 sem efeito (Δ = 0,000000); V4 e V8 nulos |
 | 1 | [Sonda dentro de cada série](P1-sonda.md) | **0,578 (faixa do meio)**; sanidades OK; o sinal fraco está na dependência de curto prazo → **passo 3 sai** |
-| 2 | Professor/aluno (rótulos de detectabilidade por linha) | — |
+| 2 | [Professor/aluno](P2-professor-aluno.md) | rodando |
 | 3 | Eixo escondido como colunas (condicional à sonda) | **fora** (a sonda não atingiu 0,60) |
-| 4 | Especialistas com poucos pesos | — |
-| 5 | Simulação de aprender com o teste | — |
+| 4 | [Especialistas com poucos pesos](P4-especialistas.md) | **nulo**: +0,0001; w_desce=0 nas duas metades |
+| 5 | [Aprender com o teste (simulação)](P5-aprender-com-teste.md) | **descartado**: pseudo-rótulos −0,0026; até com rótulos verdadeiros −0,0062 |
 
 ## Passo 0
 

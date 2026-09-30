@@ -343,6 +343,10 @@ class LightGBMConfig:
     # além dos boosters de fold (80% das séries cada), treina um booster com 100% das linhas
     # (`model/train.py:refit_full`) e o funde 50/50 com a média dos folds. Não afeta o OOF.
     full_refit_mult: float = 1.0  # rodadas do refit = round(média das best_iteration dos folds × mult)
+    soft_label: bool = False  # Passo 2 do roteiro de 30/09 (knowledge/frentes/roteiro-30-09/P2-professor-aluno.md):
+    # rótulo de treino dos positivos = (1-mix)·1 + mix·y_soft_f{k} (nota do professor, nested cross-fit),
+    # objective=cross_entropy. Exige as colunas y_soft_f* em rows. Default False = no-op.
+    soft_label_mix: float = 0.5
 
 
 @dataclass(frozen=True)
