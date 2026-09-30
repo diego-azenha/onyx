@@ -34,6 +34,31 @@ admitido ser possível com processamento sequencial, ataca isso diretamente.
 - A calibração por série (F1, `state/calibration.py`) já ataca parte do problema pelo outro lado:
   torna o score de cada série comparável sem ver as outras.
 
+## CORREÇÃO (2026-09-30): com `INFER_PARALLELISM=1`, o estado entre séries é determinístico
+
+A conclusão acima ("permitido, mas inviável para quem quer prêmio") **estava errada** para o caso de
+um só processo. O código oficial do avaliador
+([`runner.py`](https://raw.githubusercontent.com/crunchdao/competitions/master/competitions/structural-break-real-time/scoring/runner.py),
+lido em 30/09) mostra:
+
+- a checagem de determinismo re-executa **as primeiras N séries**, na mesma ordem:
+  `determinism_slice = slice(None, int(len(datasets) * determinism_check))`;
+- cada worker percorre a sua fatia em ordem (`for dataset in datasets[start_index:end_index]`);
+- a comparação é `numpy.allclose(..., atol=tolerance)`.
+
+Com `INFER_PARALLELISM=1`, as duas execuções percorrem as mesmas séries na mesma ordem, o estado
+acumulado é idêntico e as previsões batem. A explicação do organizador ("começar em pontos
+diferentes") descreve o caso com **vários** processos.
+
+**Ressalvas que continuam valendo:**
+1. o organizador pediu que o código funcione igual com ordem fixa ou aleatória;
+2. a avaliação fora da amostra roda **uma vez**, sobre dados novos; o placar público não é o final;
+3. usar posição na fila, ids ou mudar o comportamento depois dos primeiros 10% seria trapaça e está
+   fora de questão.
+
+O uso legítimo, "aprender com o teste" (rotular em retrospecto as séries já concluídas e reajustar uma
+correção pequena), é simulado no [passo 5 do roteiro de 30/09](../frentes/roteiro-30-09/README.md).
+
 ## Perguntas a responder antes de construir
 
 1. Qual é a fonte exata da afirmação dos organizadores, e o que ela permite?
