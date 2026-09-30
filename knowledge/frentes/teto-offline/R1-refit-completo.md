@@ -44,3 +44,18 @@ que a perda da média entre 5 modelos, e o saldo depende do sorteio. A variante 
 O código fica pronto e **desligado**: `LightGBMConfig.full_refit` (default `False`) e
 `model/train.py:refit_full`, chamado em `adapter/platform.py:train`. Para reabrir: K ≥ 4 no holdout
 externo, ou refit bagged (vários refits com sementes diferentes), que ataca justamente a variância.
+
+## R1b: refit ensacado, K=4 (reaberto em 2026-09-30, 16:30)
+
+**Por quê reabrir:** depois do [L1](L1-comprimento-e-o-topo.md), o alvo realista é o teto legítimo
+(~0,645–0,65 no placar), e o refit é o único ganho que existe **só na submissão**. A produção já ensaca
+7 sementes, então a comparação justa é **média de K refits contra média de K × 5 boosters de fold**, e
+não um booster único como no R1.
+
+**Desenho:** as mesmas predições por semente do `r1_refit.py` (holdout externo id % 5 == 0), sementes
+777, 101, 202, 303. Braços: (a) média dos logits dos folds nas 4 sementes; (b) média dos 4 refits;
+(c) 50/50. TS-AUC no holdout, grade do board, com IC por bootstrap de séries do holdout.
+
+**Hipótese (escrita ANTES de medir):** (b) − (a) entre +0,002 e +0,006 (C1: ×1,25 de dados ≈ +0,0046).
+**Adotar** `full_refit` em produção se (b) ou (c) der ≥ +0,003 com o IC excluindo 0. Descartar se
+≤ +0,001.

@@ -52,3 +52,20 @@ relação em **U** aprendida com poucos eventos de queda (Onyx 0,564 nas quedas;
 0,774). O |x| torna a relação monotônica e mais barata em amostra. Só a família de variância (~25
 colunas), para não diluir o `feature_fraction`. Previsão: **+0,000 a +0,004** contra o E1, com o ganho
 concentrado nas quedas. Adotar com IC excluindo 0 e ≥3/4 sementes positivas.
+
+**Resultado V10 (15:59):** contra o E1 **−0,0008 [−0,0026; +0,0012]**; semente 777 −0,0016. **Nulo:** o |x|
+das features de variância não ajuda a aprender as quedas.
+
+## V11: E1 + `--wt-align` com a grade do board (hipótese antes de medir, 16:05)
+
+A métrica pesa cada passo por n_pos·n_neg, com o peso concentrado em t = 150–600, e o treino equilibra
+as classes por passo sem seguir esse perfil. O `wt_align` existia, mas **nunca foi medido como braço
+principal** (só como membro de blend no Exp0) e alinhava a massa nos passos retidos da grade thin. Com
+isso, t>400 ficava 4× sub-ponderado. Corrigido: alvo × `thin_weight`. Previsão: **+0,000 a +0,004**
+contra o E1. Adotar com IC excluindo 0 e ≥3/4 sementes.
+
+**Resultado V11 (17:16):** bag K=4, v-EMA, 0,6338 contra 0,6349 do E1: **−0,0012 [−0,0032; +0,0005]**.
+Sementes pareadas: 777 −0,0018 · 101 −0,0002. Por faixa: t ≤ 50 **−0,0113** (IC exclui 0), 50–150
+−0,0029, 150–400 −0,0014, t > 400 +0,0015. **Nulo:** o alinhamento move massa para t grande e ganha um
+pouco ali, mas perde mais no começo. A correção de `thin_weight` em `model/weights.py` fica (o braço
+é desligado por default, e a correção deixa o `wt_align` fiel à grade do board se alguém reabri-lo).

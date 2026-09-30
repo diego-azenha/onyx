@@ -1,6 +1,6 @@
 # Premissa 2 — "Cada série é julgada sozinha"
 
-**Status:** aberta · **Prioridade:** 2ª, ou 1ª se a frente de surpresa for descartada
+**Status:** fechada (2026-09-30): sem ganho simulado e desaconselhado pelo organizador · **Prioridade:** 2ª, ou 1ª se a frente de surpresa for descartada
 
 ## A afirmação questionada
 
@@ -58,6 +58,13 @@ diferentes") descreve o caso com **vários** processos.
 
 O uso legítimo, "aprender com o teste" (rotular em retrospecto as séries já concluídas e reajustar uma
 correção pequena), é simulado no [passo 5 do roteiro de 30/09](../frentes/roteiro-30-09/README.md).
+
+## ATUALIZAÇÃO (2026-09-30, tarde): a palavra final do organizador é contra
+
+Relido o fio do fórum até o fim: depois da pergunta sobre a re-execução de 10%, o organizador conclui que
+*"trying to persist state across time series will likely result in your code not being deterministic
+based on when it starts"*. O `INFER_PARALLELISM` da nuvem não está sob nosso controle. Como o passo 5
+(simulação de aprender com o teste) também não rendeu nada, **estado entre séries fica fora do projeto**.
 
 ## Perguntas a responder antes de construir
 

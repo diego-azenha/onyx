@@ -5,6 +5,13 @@ Onyx não é velocidade. 57% do peso da métrica está em pares com ≥100 ponto
 separa só 0,65–0,70 ([diário 2026-09-29](../../diario/2026-09-29.md)). A pergunta: quanto estes dados
 permitem separar quando a evidência já está toda lá, e que arquitetura explora isso em tempo real?
 
+## Atualização (fim de tarde de 2026-09-30)
+
+**O teto legítimo está alcançado.** Três representações independentes (a nossa e as de dois participantes do
+fórum) convergem para ~0,633–0,645 no placar. O topo (68,71) coincide com "modelo do nosso nível +
+comprimento do online conhecido" ([L1](L1-comprimento-e-o-topo.md)), uma informação que não existe no
+conteúdo das séries. O ganho que resta é **submeter o E1** (~rank 85 de 797, estimado).
+
 ## Resumo executivo (madrugada de 2026-09-30)
 
 **O teto não é de informação no sinal, é de amostra de EVENTOS de quebra, e o que paga é reduzir a
@@ -40,6 +47,8 @@ variância do aprendiz.**
 | X1 | [Calibração por excursões + teste de deriva](X1-excursoes.md) | **negativos**: a calibração tira poder; o H0 é estacionário |
 | T3 | [Embeddings de modelo de fundação (Chronos-Bolt)](T3-modelo-de-fundacao.md) | **negativo**: 0,53 sozinho, não soma |
 | N1 | [Subamostrar negativos no treino](N1-subamostra-negativos.md) | refeito sobre o E1 como V2 |
-| V1–V8 | [Empilhar redução de variância sobre o E1](V-empilhamento.md) | rodando (V1 nulo) |
+| V1–V11 | [Empilhar redução de variância sobre o E1](V-empilhamento.md) | **nenhum passa a barra** (ver ficha) |
 | rep43 | Réplica do E1 na partição 43 | **replicado**: +0,0115, IC exclui 0 em todos os buckets |
 | R1 | [Refit com 100% das séries (produção)](R1-refit-completo.md) | **inconclusivo** (+0,0041 / −0,0053 por semente); código pronto, desligado |
+| S6/S7 | [Especialistas por tipo de quebra, e limiar](S6-especialistas-por-tipo.md) | **descartados**: a AUC por tipo não vira ordenação global; as `fixa` têm 70,7% do peso |
+| **L1** | [O valor do comprimento do online e o topo do placar](L1-comprimento-e-o-topo.md) | **diagnóstico-chave**: E1 + comprimento conhecido = 0,6869, igual ao topo; o comprimento não é previsível de forma legítima |

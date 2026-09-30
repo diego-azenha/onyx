@@ -222,6 +222,11 @@ partição fixa, então um IC que exclui 0 continua condicionado à partição e
 bucket que a motivava **trocou de sinal** entre partições. Vale sobretudo quando a decisão se apoia em
 UM bucket.
 
+**A régua local está verificada contra o código oficial** (`scoring.py` da CrunchDAO, lido em 2026-09-30):
+por passo, `roc_auc_score` sobre as séries vivas, peso `n_pos·n_neg`, passos com uma classe só pulados,
+e `time_online = merged.groupby("id").cumcount()`, ou seja, o **passo online** e não o tempo absoluto.
+Sem arredondamento nem float32 no cálculo. É exatamente a nossa `weighted_ts_auc` na grade cheia.
+
 **Onde a métrica realmente paga.** ⚠️ **A tabela de 2026-07-21 media a GRADE ERRADA. Corrigida em
 2026-07-25 (A6/A2 de `CAMPANHA_POLIMENTO.md`, `scripts/a2_full_grid_ts_auc.py`).**
 
@@ -430,6 +435,11 @@ séries e 0,8098 num subconjunto de 500. Não existe piloto barato por amostrage
 - **Monitores de espera em background são encerrados pelo Claude Code sob pressão de memória**, e o
   treino em `nohup` sobrevive. Filas longas devem ser scripts `nohup` resumíveis, conferidos com
   checagens curtas.
+
+- **O Git Bash deste Windows não tem `pgrep`/`pkill`** (2026-09-30): uma fila que esperava com
+  `while ... && pgrep -f X; do sleep` saiu na hora (comando inexistente = falso) e subiu um segundo job
+  pesado junto com o que estava rodando. Espere por um **arquivo marcador** que o job anterior escreve
+  ao terminar (`until grep -q COMPLETA fila.log; do sleep 30; done`).
 
 ---
 
