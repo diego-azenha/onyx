@@ -349,6 +349,9 @@ class LightGBMConfig:
     soft_label_mix: float = 0.5
     soft_label_modo: str = "rotulo"  # "rotulo" (positivos suaves), "peso" (nota pondera positivos) ou
     # "destilacao" (alvo = (1-mix)·y + mix·q em todas as linhas; q do oráculo, scripts/o1_oraculo.py)
+    oraculo_cols: tuple = ()  # colunas que o oráculo vê em t e nos snapshots futuros (model/oraculo.py)
+    oraculo_sub: int = 2      # o oráculo treina com 1 a cada `sub` linhas
+    oraculo_rounds: int = 400
 
 
 @dataclass(frozen=True)

@@ -73,6 +73,14 @@ def train(
         # Cada semente muda so o sorteio interno do LightGBM (`boost_seed`), NAO os folds
         # (`cfg.seed` intocado), e os K boosters sao FUNDIDOS num so para nao multiplicar por K o
         # custo de inferencia por passo. Ver docs/BACKLOG_TSAUC.md, "Bagging de sementes".
+        # Oráculo destilado (knowledge/frentes/oraculo-destilado): o alvo q = P(y_t | série inteira) é
+        # calculado UMA vez, com cross-fit por série, e reaproveitado por todas as sementes e folds.
+        if cfg.lightgbm.soft_label and cfg.lightgbm.soft_label_modo == "destilacao":
+            from sbrt.model.oraculo import alvos_oraculo
+            q = alvos_oraculo(rows, cfg, cfg.seed)
+            for k in range(cfg.lightgbm.n_folds):
+                rows[f"y_soft_f{k}"] = q
+
         seeds = list(cfg.lightgbm.bag_seeds) or [cfg.lightgbm.boost_seed or cfg.seed]
         boosters, ensemble = [], None
         for s in seeds:

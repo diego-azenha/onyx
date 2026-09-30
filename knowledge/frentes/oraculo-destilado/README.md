@@ -50,3 +50,52 @@ O oráculo tem muito mais informação, então há espaço para a destilação.
 - **Adotar** se ≥ +0,005 com IC excluindo 0 nas partições 42 (K=4) e 43 (K=2). **Descartar** se ≤ +0,002.
 - **Checagem de vazamento:** o aluno não pode passar do oráculo nas mesmas séries. Se a destilação
   pura empatar, testar `mix=0,5` como exploratório.
+
+## O2 (v1): falhou, e o motivo é teórico (12:10)
+
+Aluno destilado com o oráculo v1 (mix 1,0), semente 777: **0,6303 → 0,6248 (−0,0055)**. Interrompido
+depois da 1ª semente.
+
+**Diagnóstico:** a Rao-Blackwellização só garante E[q|x] = E[y|x] se a informação do oráculo **contém** a
+do aluno. O oráculo v1 via só as **65** colunas principais em t, e o aluno vê **194**. Nas ~130 restantes,
+q "esquece" o que o rótulo carregava e puxa o aluno para um alvo mais pobre. Sinal lateral: o aluno
+destilado parou antes (best ≈ 30–48 árvores, contra ≈ 65–93 do E1), porque a parada antecipada mede a
+logloss contra o `y` verdadeiro.
+
+## O3: oráculo v2 (todas as 194 colunas em t + snapshots futuros das top-65)
+
+Sonda no fold 0: **0,7117** (v1: 0,7063; E1: 0,6302). Alvos nested gerados por
+`scripts/o1_oraculo.py --alvos --todas-em-t --tag _v2`. Antes de K=4, uma semente (777) com mix 1,0 e
+outra com mix 0,5 (`scripts/_fila_oraculo2.sh`). Regra: só vai para K=4 a variante com Δ ≥ +0,003 na
+semente 777 contra o E1 (+0,0000 é o E1 da mesma semente, 0,6303).
+
+### Resultado O3 (12:55)
+
+Oráculo v2, TS-AUC interno por fold: 0,7143 · 0,7052 · 0,7132 · 0,7064 · 0,7149.
+
+| Aluno (semente 777, pareado com o E1 da mesma semente, 0,6303) | TS-AUC | Δ |
+|---|---|---|
+| destilação pura (mix 1,0), oráculo v1 (top-65 em t) | 0,6248 | **−0,0055** |
+| destilação pura (mix 1,0), oráculo v2 (194 em t) | 0,6258 | **−0,0045** |
+| mistura 0,5, oráculo v2 | 0,6330 | +0,0027 |
+
+## Decisão
+
+**A frente fecha sem K=4.** Pela regra registrada, só a variante com ≥ +0,003 na semente 777 iria para
+K=4; a melhor deu +0,0027. Todo ganho por semente dessa ordem sumiu no bag até agora (V7, passo 2), e
+a destilação pura **piora**.
+
+**Por que a teoria falhou:** a Rao-Blackwellização supõe um q **exato**. Aqui o oráculo é estimado com
+os **mesmos ~5 mil eventos escassos** que limitam o aluno. O erro de estimação dele se correlaciona com
+as features do aluno, e o aluno aprende esse viés junto com a redução de variância. A condição de
+conter a informação do aluno (v2) melhorou pouco (−0,0055 → −0,0045). **Com o mesmo dado, um professor
+não é mais confiável que o rótulo.** O ganho de uma destilação de verdade exige um professor com
+informação **externa** aos eventos (outro dado, um prior estrutural). Nenhum dos candidatos testados
+serviu (2025, transplante, modelo de fundação).
+
+O código fica pronto e **desligado**: `soft_label_modo="destilacao"`, `model/oraculo.py` e o gancho em
+`adapter/platform.py`.
+
+**Pendência de maior valor:** o E1 **não foi submetido**. Este clone não tem o token da Crunch, e a
+submissão fica com o usuário. As âncoras OOF → placar são de julho; uma submissão do E1 no release atual
+(234) diz se a distância ao pelotão (0,66–0,675) é de fato ~0,03.

@@ -28,10 +28,14 @@ from sbrt.evaluation.ts_auc import board_grid_multipliers, weighted_ts_auc
 DELTAS = (50, 200)
 
 
-def montar(rows: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
-    """Features do oráculo, alinhadas a `rows` (ordenado por id, t)."""
+def montar(rows: pd.DataFrame, cols: list[str], cols_agora: list[str] | None = None) -> pd.DataFrame:
+    """Features do oráculo, alinhadas a `rows` (ordenado por id, t). `cols` entram em t e nos snapshots
+    futuros; `cols_agora` (default = cols) entram só em t. Para a Rao-Blackwellização valer, a
+    informação do oráculo em t tem de CONTER a do aluno: `cols_agora` = todas as features do aluno."""
     ids = rows["id"].to_numpy(); t = rows["t"].to_numpy()
     F = rows[cols].to_numpy(dtype=np.float32)
+    F_agora = rows[cols_agora].to_numpy(dtype=np.float32) if cols_agora is not None else F
+    nomes_agora = cols_agora if cols_agora is not None else cols
     cortes = np.flatnonzero(np.diff(ids)) + 1
     ini = np.r_[0, cortes]; fim = np.r_[cortes, len(ids)]
     blocos = {d: np.empty(len(ids), dtype=np.int64) for d in DELTAS}
@@ -44,7 +48,7 @@ def montar(rows: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
             blocos[d][a:b] = a + np.minimum(k, b - a - 1)
         ultimo[a:b] = b - 1
         T_len[a:b] = tt[-1]
-    partes = [pd.DataFrame(F, columns=[f"o_{c}" for c in cols])]
+    partes = [pd.DataFrame(F_agora, columns=[f"o_{c}" for c in nomes_agora])]
     for d in DELTAS:
         partes.append(pd.DataFrame(F[blocos[d]], columns=[f"o{d}_{c}" for c in cols]))
     partes.append(pd.DataFrame(F[ultimo], columns=[f"oT_{c}" for c in cols]))
@@ -68,6 +72,9 @@ def main() -> None:
     ap.add_argument("--fold-seed", type=int, default=None)
     ap.add_argument("--rounds", type=int, default=400)
     ap.add_argument("--sub", type=int, default=2, help="usa 1 a cada `sub` linhas no treino do oráculo")
+    ap.add_argument("--todas-em-t", action="store_true",
+                    help="em t, o oráculo vê TODAS as features do aluno (lidas de --full-rows); snapshots futuros só das top-K")
+    ap.add_argument("--tag", default="")
     args = ap.parse_args()
     cfg = load_config(DEFAULT_CONFIG_PATH)
     seed = args.fold_seed if args.fold_seed is not None else cfg.seed
@@ -75,7 +82,18 @@ def main() -> None:
 
     rows = pd.read_parquet(args.rows).sort_values(["id", "t"]).reset_index(drop=True)
     cols = [c for c in rows.columns if c not in ("id", "t", "y", "thin_weight")]
-    X = montar(rows, cols)
+    if args.todas_em_t:
+        full0 = pd.read_parquet(args.full_rows).sort_values(["id", "t"]).reset_index(drop=True)
+        assert (full0[["id", "t"]].to_numpy() == rows[["id", "t"]].to_numpy()).all()
+        agora = [c for c in full0.columns if c not in ("id", "t", "y", "thin_weight") and not c.startswith("y_soft")]
+        for c in agora:
+            if c not in rows.columns:
+                rows[c] = full0[c].to_numpy()
+        del full0
+        X = montar(rows, cols, agora)
+    else:
+        X = montar(rows, cols)
+    print("features do oráculo:", X.shape, flush=True)
     y = rows["y"].to_numpy()
     folds = list(grouped_stratified_kfold(rows[["id", "t", "y"]], cfg.lightgbm.n_folds, seed))
     fold_de = np.empty(len(rows), dtype=np.int64)
@@ -93,7 +111,7 @@ def main() -> None:
         rel = {"tsauc_oraculo_fold0": weighted_ts_auc(v.t.values, v.y.values, v.oraculo.values, w),
                "tsauc_e1_fold0": weighted_ts_auc(v.t.values, v.y.values, v.oof_pred.values, w)}
         print(json.dumps(rel, indent=2))
-        (art / "sonda.json").write_text(json.dumps(rel, indent=2), encoding="utf-8")
+        (art / f"sonda{args.tag}.json").write_text(json.dumps(rel, indent=2), encoding="utf-8")
         imp = pd.Series(m.feature_importance("gain"), index=X.columns).sort_values(ascending=False)
         print(imp.head(15))
         return
@@ -121,9 +139,9 @@ def main() -> None:
         assert (full[["id", "t"]].to_numpy() == rows[["id", "t"]].to_numpy()).all()
         for k, v in soft.items():
             full[k] = v
-        out = Path(f"data/processed/train_rows_oraculo_s{seed}.parquet")
+        out = Path(f"data/processed/train_rows_oraculo{args.tag}_s{seed}.parquet")
         full.to_parquet(out)
-        (art / f"alvos_s{seed}.json").write_text(json.dumps(rel, indent=2), encoding="utf-8")
+        (art / f"alvos{args.tag}_s{seed}.json").write_text(json.dumps(rel, indent=2), encoding="utf-8")
         print(json.dumps(rel, indent=2), "\ngravado", out)
 
 
