@@ -35,7 +35,7 @@ MODULES = [
     "state/calibration.py", "state/h0.py", "postprocess/monotonicity.py", "model/fallback.py",
     "state/scorer.py", "model/base_rate.py", "model/predict.py", "model/fuse.py",
     "evaluation/splits.py",
-    "evaluation/ts_auc.py", "model/detectability.py", "model/weights.py", "model/train.py",
+    "evaluation/ts_auc.py", "model/detectability.py", "model/weights.py", "model/oraculo.py", "model/train.py",
     "model/dataset.py", "adapter/platform.py",
 ]
 
