@@ -10,9 +10,9 @@ Incumbente: **E1 = 0,6349** OOF (partição 42, K=4).
 | Passo | O quê | Status |
 |---|---|---|
 | 0 | Premissa 2, empates em float32, fechar V4/V8 | **concluído**: premissa 2 corrigida; float32 sem efeito (Δ = 0,000000); V4 e V8 nulos |
-| 1 | [Sonda dentro de cada série](P1-sonda.md) | — |
+| 1 | [Sonda dentro de cada série](P1-sonda.md) | **0,578 (faixa do meio)**; sanidades OK; o sinal fraco está na dependência de curto prazo → **passo 3 sai** |
 | 2 | Professor/aluno (rótulos de detectabilidade por linha) | — |
-| 3 | Eixo escondido como colunas (condicional à sonda) | — |
+| 3 | Eixo escondido como colunas (condicional à sonda) | **fora** (a sonda não atingiu 0,60) |
 | 4 | Especialistas com poucos pesos | — |
 | 5 | Simulação de aprender com o teste | — |
 
