@@ -111,6 +111,11 @@ def compute_row_weights(
 
     if wt_align:
         wt_target = (counts["n_pos"] * counts["n_neg"]).clip(lower=1.0)
+        # Grade do board (2026-09-30, knowledge/frentes/teto-offline/V-empilhamento.md, V11): cada passo retido
+        # representa `thin_weight` passos do board (1/2/4); sem isto, t>400 fica 4x sub-ponderado, o mesmo
+        # erro de grade que o A2 achou na avaliação.
+        if "thin_weight" in rows.columns:
+            wt_target = wt_target * rows.groupby("t")["thin_weight"].first().reindex(counts.index).fillna(1.0)
         cur = pd.Series(w, index=rows["t"].to_numpy()).groupby(level=0).sum()
         scale = (wt_target / cur).reindex(counts.index).fillna(1.0)
         w = w * rows["t"].map(scale.to_dict()).to_numpy(dtype=np.float64)

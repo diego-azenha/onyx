@@ -41,6 +41,7 @@ rendeu e o que está em andamento. Substitui a antiga pasta `docs/` (migrada em 
 | TS-AUC OOF, grade do board, partição 42, K=4 | **0,6349** (`oof_e1_vema_bag4`); sem E1, 0,6278 (`oof_b0_vema_bag4`, reconstruído neste clone) | [B0](frentes/surpresa-acumulada/B0-incumbente.md) |
 | Partição 43, K=2 | 0,6308 (E1) contra 0,6193 (B0) | [E1](frentes/teto-offline/E1-extra-trees.md) |
 | Placar oficial conhecido | V4 `5e42ff5` = 0,6201; B6+C6 ≈ 0,6267. O E1 ainda **não foi submetido** | [NOTAS §5](operacao/NOTAS_AGENTES.md) |
+| Teto legítimo e alvo realista | ~0,645–0,65 no placar; o topo (68,71) coincide com E1 + comprimento do online conhecido, que não é previsível de forma legítima. E1 estimado por volta do rank 85 de 797. **A fase de submissão fecha em 03/10, 16:00** | [L1](frentes/teto-offline/L1-comprimento-e-o-topo.md) |
 | Notebook de submissão | regenerado com o E1 e verificado bit a bit em 2026-09-30 | `submission_notebook.ipynb` |
 
 ## Redirecionamento: caminhos antigos → onde estão agora

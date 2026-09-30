@@ -59,3 +59,18 @@ não um booster único como no R1.
 **Hipótese (escrita ANTES de medir):** (b) − (a) entre +0,002 e +0,006 (C1: ×1,25 de dados ≈ +0,0046).
 **Adotar** `full_refit` em produção se (b) ou (c) der ≥ +0,003 com o IC excluindo 0. Descartar se
 ≤ +0,001.
+
+**Resultado R1b (17:35, `scripts/r1b_avalia.py`, `artifacts/reports/r1_refit/r1b.json`):** holdout externo
+de 2.000 séries, 4 sementes, IC por bootstrap de séries (200 réplicas):
+
+| Braço | TS-AUC | Δ contra os folds | IC 95% |
+|---|---|---|---|
+| (a) média dos folds, 4 sementes (produção) | 0,6316 | — | — |
+| (b) média de 4 refits com 100% | 0,6309 | −0,0007 | [−0,0045; +0,0032] |
+| (c) 50/50 | 0,6322 | +0,0006 | [−0,0011; +0,0024] |
+
+Por semente, o refit dá 777 +0,0041 · 101 −0,0053 · 202 −0,0057 · 303 −0,0042.
+
+**Descartado** (≤ +0,001). O ×1,25 de dados não aparece porque os 5 boosters de fold, **juntos**, já
+veem 100% das séries: o ensemble de folds captura a diversidade de eventos que o refit acrescentaria,
+e ainda reduz variância. O `full_refit` segue desligado. Não reabrir.
