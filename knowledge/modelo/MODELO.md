@@ -9,8 +9,8 @@ ADIA Lab Structural Break Challenge: Real-Time Edition (CrunchDAO), 2026.
 docstrings, comentários de código e `configs/default.yaml` referenciam `plano §N` em dezenas de
 lugares. `§3.4`, `§9.0`, `§13.2` etc. continuam resolvendo aqui.
 
-Companheiros: [`HISTORICO.md`](HISTORICO.md) (o que mudou e o que rendeu) ·
-[`NOTAS_AGENTES.md`](NOTAS_AGENTES.md) (layout, contratos, comandos, armadilhas operacionais).
+Companheiros: [`HISTORICO.md`](../historico/HISTORICO.md) (o que mudou e o que rendeu) ·
+[`NOTAS_AGENTES.md`](../operacao/NOTAS_AGENTES.md) (layout, contratos, comandos, armadilhas operacionais).
 
 ---
 
@@ -544,7 +544,7 @@ robustez com 200 seeds: perto de uma hora (CI usa 40).
 ## §15. Esqueleto, determinismo e fases
 
 ### §15.1 Contratos de código
-Ver [`NOTAS_AGENTES.md`](NOTAS_AGENTES.md) §2 (assinaturas congeladas, incluindo as correções feitas
+Ver [`NOTAS_AGENTES.md`](../operacao/NOTAS_AGENTES.md) §2 (assinaturas congeladas, incluindo as correções feitas
 sobre o contrato original). Em resumo:
 
 ```python

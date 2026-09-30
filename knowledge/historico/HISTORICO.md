@@ -4,7 +4,7 @@
 resultado medido e decisão. Substitui `DIAGNOSTICO_TS_AUC.md`, `PARECER_AUDITORIA_ONYX.md`,
 `RESULTADOS_ROADMAP_R0_R6.md`, `PROPOSTA_FEATURES_V2.md`, `RESULTADOS_FEATURES_V2.md`,
 `INVESTIGACAO_FALHAS_V3.md` e `RESULTADOS_P1_P4.md`.
-**Fundamentos e definições:** [`MODELO.md`](MODELO.md). **Operação:** [`NOTAS_AGENTES.md`](NOTAS_AGENTES.md).
+**Fundamentos e definições:** [`MODELO.md`](../modelo/MODELO.md). **Operação:** [`NOTAS_AGENTES.md`](../operacao/NOTAS_AGENTES.md).
 
 ---
 
@@ -1234,3 +1234,49 @@ passar sem exercitar o caminho do D1).
 de **empacotamento**, rodada no fim. Ela é, de fato, o único ponto do projeto que exercita o caminho
 de produção — logo é portão de **adoção**. Um flag novo deveria passar por ela **antes** de entrar no
 `default.yaml`, não depois. Ver `PROXIMA_SEMANA.md`, item 1-bis.
+
+---
+
+## 16. Rodada 11 (2026-09-29/30) — Repensar do zero: o teto é de amostra de eventos, e o extra-trees paga
+
+Registro detalhado em [`knowledge/frentes/`](../frentes/). Aqui fica o resumo e as decisões.
+
+### 16.1 A premissa da surpresa acumulada (frente [surpresa-acumulada](../frentes/surpresa-acumulada/README.md))
+
+Detector novo (`src/surpresa/`): modelo por série → fluxo universal N(0,1) → razões de verossimilhança
+direcionais acumuladas. Sozinho dá **0,575** (no nível das melhores colunas do Onyx). Somado ao OOF,
+**+0,0001**, nulo. Como features (S5), +0,0044 com IC excluindo 0, mas uma semente em quatro negativa e
+a checagem de mecanismo falhou: não adotado. **A surpresa ingênua (Σ −log p) fica abaixo do acaso em
+quebras de dependência e cauda.**
+
+### 16.2 O diagnóstico do teto (frente [teto-offline](../frentes/teto-offline/README.md))
+
+| Pergunta | Resposta medida |
+|---|---|
+| Com τ conhecido, quanto 118 features de duas amostras separam? (T1) | 0,609 / 0,666 / 0,689 (L = 100 / 200 / 400), **igual ao Onyx** no mesmo ponto |
+| Representações aprendidas acrescentam? (T2, T3) | ROCKET 0,600, Chronos-Bolt 0,53, nenhuma soma |
+| O Onyx é limitado por amostra? (C1) | **sim: ×2 séries = +0,0144** |
+| Por positivos ou negativos? (C2) | **só positivos**: negativos a mais = −0,0003 |
+| Há fonte de eventos extras? (A1, A2, D25) | re-corte −0,012 (duplica eventos), transplante não transfere, 2025 é **permitido** mas é outra distribuição (AUC de domínio 0,962) |
+| Há canal fora do sinal? | não: comprimento, padronização, repetição exata ou afim, teste×treino, cardápio discreto e deriva, todos fechados |
+
+### 16.3 A alavanca: reduzir a variância do aprendiz
+
+**E1, `lightgbm.extra_trees: true`, ADOTADO.** Partição 42, K=4: **+0,0071 [+0,0038; +0,0102]**, 4/4
+sementes (0,6278 → **0,6349**). Partição 43, K=2: **+0,0115 [+0,0080; +0,0159]**, IC exclui 0 em todos
+os buckets. É o maior ganho isolado do projeto. Smoke test e notebook verificados bit a bit.
+
+Empilhamentos sobre o E1 ([V1–V8](../frentes/teto-offline/V-empilhamento.md)): `feature_fraction` 0,5
+nulo; metade dos negativos −0,0088; receita histórica nula; os demais na fila na hora deste registro.
+Refit com 100% das séries ([R1](../frentes/teto-offline/R1-refit-completo.md)): inconclusivo,
+implementado e desligado.
+
+### 16.4 Lições
+
+1. **Medir o teto antes de construir** (a F4 do DIAGNOSTICO_ESTRUTURAL, feita finalmente): o oráculo
+   com τ conhecido mostrou que o problema não era a arquitetura sequencial.
+2. **A curva de aprendizado é o instrumento mais barato e mais decisivo**: ×2 dados = +0,0144 disse,
+   em 15 minutos, que a alavanca é variância e não features.
+3. **Duplicar eventos não é aumentar dados**: o re-corte piorou −0,012.
+4. **Premissa escrita não é premissa verificada**: "dados de 2025 não são permitidos" estava errado. A
+   doc oficial permite.

@@ -6,7 +6,7 @@ frentes F0→F10 mas foi escrito **sem acesso linha-a-linha a `src/sbrt/`** — 
 próprio compass. Aqui cada frente vira item executável: arquivo alvo, hipótese registrável a priori,
 bucket declarado, DoD e comando de medição.
 
-**Leia antes:** [`NOTAS_AGENTES.md`](NOTAS_AGENTES.md) §1 (invariantes), §2 (contratos), §5
+**Leia antes:** [`NOTAS_AGENTES.md`](../operacao/NOTAS_AGENTES.md) §1 (invariantes), §2 (contratos), §5
 (protocolo de medição), §11 (como adicionar família nova). Nada aqui substitui aquele protocolo.
 
 ## ERRATA (2026-07-22, 02:40) — a primeira "calibração do nulo" estava contaminada
@@ -354,11 +354,11 @@ Três desalinhamentos materiais. Todos **reduzem** o trabalho, nenhum aumenta.
 
 | Frente do plano | Estado real | Consequência |
 |---|---|---|
-| **F1** "null personalizado" — tratado como construção de P0 | **Já implementado** desde o V2 em [`state/calibration.py`](../src/sbrt/state/calibration.py). `fit_h0` → `H0Params.null_stats` → `scorer.py:apply_calibration`. Cobre **46 de 183** features | F1 vira *extensão de cobertura*. Custo ~0 µs/passo |
+| **F1** "null personalizado" — tratado como construção de P0 | **Já implementado** desde o V2 em [`state/calibration.py`](../../src/sbrt/state/calibration.py). `fit_h0` → `H0Params.null_stats` → `scorer.py:apply_calibration`. Cobre **46 de 183** features | F1 vira *extensão de cobertura*. Custo ~0 µs/passo |
 | **F6.1** "calibrar `cusum_dep`, `accum_window_rho1_fz` (mortas)" — P2 | Mesmas features, mesma mecânica de F1 | **F6.1 ≡ F1.** Item único, medido primeiro |
 | **F2** "congelar o filtro AR(10)" — P0 | **Já congelado.** `H0Params` é `frozen=True` e não tem `.refit()` (bloqueio B2). `h0.py:whiten_step` aplica φ do histórico no online: **`e` É o erro de predição um-passo do filtro congelado** | Variância residual (`accum_window_var_ln_w*`, que é log da razão online/histórico pois `e` já vem dividido por `sigma_e`) e ρ₁ residual (`accum_*_rho1_fz`, `dep_absrho1/sqrho1`) já são emitidas. **Falta só** brancura multi-lag sobre `e` e score-CUSUM |
 | **F4** "trajetória do estatístico" | Ausente, e **não cabe no contrato**: `StateBlock.update(e, e_raw, e_vol, t)` não vê as saídas dos outros blocos | Exige extensão de contrato — ver F4 |
-| **F5** "precursores no passo 1" | [`state/fingerprint.py`](../src/sbrt/state/fingerprint.py) já emite 9 descritores só-histórico, 0 µs/passo | Extensão barata, **mas gated por CE6** — ver F0.d |
+| **F5** "precursores no passo 1" | [`state/fingerprint.py`](../../src/sbrt/state/fingerprint.py) já emite 9 descritores só-histórico, 0 µs/passo | Extensão barata, **mas gated por CE6** — ver F0.d |
 | **F9** "detectabilidade estimada" | `artifacts/reports/break_type_census.csv` já tem `delta_rho1`, `delta_logvar_e`, `delta_kurt`, `delta_exceed`, `n_post` por série | Insumo pronto para F0.b |
 
 ### As 91 features online sem `_cal` — o alvo real de F1
@@ -396,7 +396,7 @@ deve ser o primeiro commit.**
 
 ### Três achados que mudam decisões
 
-1. **CE6 já mede 0,5067** ([`scripts/ce6_history_classifier.py`](../scripts/ce6_history_classifier.py),
+1. **CE6 já mede 0,5067** ([`scripts/ce6_history_classifier.py`](../../scripts/ce6_history_classifier.py),
    28 features só-histórico, taxa-base 0,4967): o histórico sozinho **não prevê se a série quebra**.
    É evidência medida contra a premissa de F5. Não é refutação completa — CE6 mede *existência* de
    quebra, F5 quer *timing precoce* — mas justifica gatear F5 antes de gastar código.
@@ -422,7 +422,7 @@ deve ser o primeiro commit.**
 ### 1.5 O rastreio que deveria vir antes de qualquer braço de calibração
 
 A correção acima produziu a ferramenta que faltava no protocolo:
-[`scripts/xs_redundancy.py`](../scripts/xs_redundancy.py).
+[`scripts/xs_redundancy.py`](../../scripts/xs_redundancy.py).
 
 A TS-AUC só enxerga a **ordenação dentro de cada passo** (C1). Disso seguem dois testes que dispensam
 treinar: (a) se a coluna calibrada tem correlação ~1 com a crua **dentro do passo**, ela não pode

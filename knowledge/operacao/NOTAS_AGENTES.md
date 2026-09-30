@@ -1,9 +1,9 @@
 # Notas operacionais para agentes
 
 **Público:** agentes de IA (ou pessoas) que vão modificar este repositório. Nada aqui é necessário
-para *entender* o modelo — isso está em [`MODELO.md`](MODELO.md) — nem para saber o que já foi
-tentado — isso está em [`HISTORICO.md`](HISTORICO.md) — nem para saber o que vem a seguir — isso está
-em [`BACKLOG_TSAUC.md`](BACKLOG_TSAUC.md). Aqui ficam invariantes, contratos, comandos, inventário de
+para *entender* o modelo — isso está em [`MODELO.md`](../modelo/MODELO.md) — nem para saber o que já foi
+tentado — isso está em [`HISTORICO.md`](../historico/HISTORICO.md) — nem para saber o que vem a seguir — isso está
+em [`BACKLOG_TSAUC.md`](../historico/BACKLOG_TSAUC.md). Aqui ficam invariantes, contratos, comandos, inventário de
 artefatos, pegadinhas medidas e pendências abertas.
 
 **Ordem de leitura recomendada ao entrar no projeto:** §1 (invariantes) → §2 (contratos) → o arquivo
@@ -410,6 +410,26 @@ séries e 0,8098 num subconjunto de 500. Não existe piloto barato por amostrage
   vezes com 2 sementes cada grava `bag2` duas vezes e a segunda SOBRESCREVE a primeira. Aconteceu com
   o `p2_brw` (777+101 sobrescrito por 202+303). Os OOFs por semente sobrevivem, então dá para
   reconstruir; a medição já registrada não é invalidada, mas o arquivo deixa de reproduzi-la.
+
+- **`--set` do `train.py` é `nargs="*"`: dois `--set` na mesma linha, e o segundo SOBRESCREVE o
+  primeiro** (2026-09-30). `--set extra_trees=true ... --set feature_fraction=0.5` treina SEM extra-trees.
+  Passe todas as chaves num `--set` só (`--set extra_trees=true feature_fraction=0.5`) e confira no log
+  as linhas `--set k=v (era ...)`: uma por chave. `scripts/run_braco.sh` já funde os dois.
+- **Limite de RAM: ~2,5M linhas com `linear_tree` é o teto em 16 GB** (2026-09-30). Com 4,7M linhas o
+  treino chegou a 18 GB de memória privada, trocou para disco (0,5 s de CPU a cada 10 s) e levaria ~3 h.
+  Diagnóstico: `PrivateMemorySize64` do processo contra `FreePhysicalMemory`. Para aumento de dados,
+  meça em metade das séries.
+- **Não encadeie com `;` depois de uma checagem que pode falhar** (2026-09-30): uma asserção falhou e
+  o `;` relançou a fila com o bug. Use `&&`.
+- **Matar processo por padrão de linha de comando mata o próprio comando** (2026-09-30):
+  `Where-Object { $_.CommandLine -match '_fila_v3' } | Stop-Process` casou com o PowerShell e o bash
+  que executavam a instrução, e o resto do comando não rodou. Filtre por nome (`bash.exe`) e exclua o
+  próprio PID (`$PID`), ou mate por PID explícito.
+- **Parquets derivados precisam de `thin_weight`** além de `id`/`t`/`y`: `compute_row_weights` exige a
+  coluna, e o V4 (poda) falhou por isso.
+- **Monitores de espera em background são encerrados pelo Claude Code sob pressão de memória**, e o
+  treino em `nohup` sobrevive. Filas longas devem ser scripts `nohup` resumíveis, conferidos com
+  checagens curtas.
 
 ---
 
