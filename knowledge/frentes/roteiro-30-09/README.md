@@ -11,7 +11,7 @@ Incumbente: **E1 = 0,6349** OOF (partição 42, K=4).
 |---|---|---|
 | 0 | Premissa 2, empates em float32, fechar V4/V8 | **concluído**: premissa 2 corrigida; float32 sem efeito (Δ = 0,000000); V4 e V8 nulos |
 | 1 | [Sonda dentro de cada série](P1-sonda.md) | **0,578 (faixa do meio)**; sanidades OK; o sinal fraco está na dependência de curto prazo → **passo 3 sai** |
-| 2 | [Professor/aluno](P2-professor-aluno.md) | rodando |
+| 2 | [Professor/aluno](P2-professor-aluno.md) | **descartado**: −0,0010 no bag (+ por semente) → **pivô para o [oráculo destilado](../oraculo-destilado/README.md)** |
 | 3 | Eixo escondido como colunas (condicional à sonda) | **fora** (a sonda não atingiu 0,60) |
 | 4 | [Especialistas com poucos pesos](P4-especialistas.md) | **nulo**: +0,0001; w_desce=0 nas duas metades |
 | 5 | [Aprender com o teste (simulação)](P5-aprender-com-teste.md) | **descartado**: pseudo-rótulos −0,0026; até com rótulos verdadeiros −0,0062 |
@@ -25,3 +25,12 @@ Incumbente: **E1 = 0,6349** OOF (partição 42, K=4).
 - **V4** (poda top-65): −0,0019 [−0,0041; +0,0003]. **V8**: −0,0006. Nenhum empilhamento sobre o E1
   ([V-empilhamento](../teto-offline/V-empilhamento.md)).
 - **Submissão do E1:** fica com o usuário (conta e token Crunch).
+
+## Testes extras do dia (insights no caminho)
+
+| Teste | Resultado |
+|---|---|
+| G1: calibração cruzada por grupo (perfil ACF × curtose) × faixa de t | **−0,0098**: a escala do Onyx entre tipos de série já é melhor que uma logística por célula |
+| G2: auto-referência (score − α·linha de base da própria série) | mínimo corrente −0,025; média dos 10/25 primeiros −0,006/−0,005; média corrente 0: descartado |
+| Sobreposição invariante a afim entre o teste reduzido e o treino | **zero** em 344k janelas: canal fechado |
+| Leaderboard (API) | 21 posições entre 65,5% e 68,7%, todas determinísticas: **o pelotão está em 0,66–0,675** |

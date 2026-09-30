@@ -347,6 +347,8 @@ class LightGBMConfig:
     # rótulo de treino dos positivos = (1-mix)·1 + mix·y_soft_f{k} (nota do professor, nested cross-fit),
     # objective=cross_entropy. Exige as colunas y_soft_f* em rows. Default False = no-op.
     soft_label_mix: float = 0.5
+    soft_label_modo: str = "rotulo"  # "rotulo" (positivos suaves), "peso" (nota pondera positivos) ou
+    # "destilacao" (alvo = (1-mix)·y + mix·q em todas as linhas; q do oráculo, scripts/o1_oraculo.py)
 
 
 @dataclass(frozen=True)

@@ -244,10 +244,22 @@ def train(rows: pd.DataFrame, weights: np.ndarray, cfg, progress: bool = True) -
                     raise KeyError(f"soft_label ligado mas {col} não existe em rows (rode scripts/p2_professor.py)")
                 mix = float(getattr(lgb_cfg, "soft_label_mix", 0.5))
                 soft = rows[col].to_numpy(dtype=np.float64)[train_idx]
-                label_tr = np.where(y[train_idx] == 1, (1.0 - mix) * 1.0 + mix * soft, 0.0)
-                params_use = {**params, "objective": "cross_entropy"}
+                if getattr(lgb_cfg, "soft_label_modo", "rotulo") == "destilacao":
+                    # Oráculo destilado (knowledge/frentes/oraculo-destilado): alvo = (1-mix)·y + mix·q em
+                    # TODAS as linhas, q = P(y_t | série inteira) out-of-fold (scripts/o1_oraculo.py). Se q é
+                    # calibrado, E[q|x] = E[y|x]: mesma média, variância menor (Rao-Blackwell).
+                    label_tr = (1.0 - mix) * y[train_idx] + mix * soft
+                    params_use = {**params, "objective": "cross_entropy"}
+                elif getattr(lgb_cfg, "soft_label_modo", "rotulo") == "peso":
+                    # variante: a nota do professor PONDERA as linhas positivas (X1 por linha), rótulo 0/1
+                    w_tr = weights[train_idx] * np.where(y[train_idx] == 1, (1.0 - mix) + mix * soft, 1.0)
+                else:
+                    label_tr = np.where(y[train_idx] == 1, (1.0 - mix) * 1.0 + mix * soft, 0.0)
+                    params_use = {**params, "objective": "cross_entropy"}
             dtrain = lgb.Dataset(
-                X[train_idx], label=label_tr, weight=weights[train_idx], init_score=init_score_full[train_idx]
+                X[train_idx], label=label_tr,
+                weight=(w_tr if use_soft and getattr(lgb_cfg, "soft_label_modo", "rotulo") == "peso" else weights[train_idx]),
+                init_score=init_score_full[train_idx]
             )
         dvalid = lgb.Dataset(
             X[valid_idx],

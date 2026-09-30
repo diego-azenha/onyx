@@ -1,6 +1,6 @@
 # Passo 2 — Professor e aluno (rótulos de detectabilidade por linha)
 
-**Frente:** [roteiro 30/09](README.md) · **Status:** hipótese registrada · **Hipótese:** 2026-09-30 11:30
+**Frente:** [roteiro 30/09](README.md) · **Status:** concluído: **descartado** (principal); sucedido pela frente [oráculo destilado](../oraculo-destilado/README.md) · **Hipótese:** 2026-09-30 11:30
 
 ## Por quê
 
@@ -39,4 +39,16 @@ no `y` verdadeiro. Receita do E1.
 
 ## Resultado
 
-(pendente)
+Professor (partição 42): AUC por linha **0,667–0,672** nos 5 folds (interno); notas nas linhas positivas
+com mediana 0,46 (quantis 5%/95%: 0,00/0,92).
+
+Aluno, mistura 0,5/0,5 (`p2_aluno`), R0 do bag de 4 com v-EMA contra o E1:
+**0,6339 contra 0,6349, Δ −0,0010 [−0,0029; +0,0011]**. Por semente foi positivo nas 4 (+0,0002, +0,0016,
++0,0007, +0,0027), mas o ganho **some no bag**, o mesmo padrão do V7: redução de variância que o bag já
+faz. `cross_entropy` + `linear_tree` funcionou.
+
+## Decisão
+
+**Descartado** (≤ +0,002). O braço exploratório "nota como peso" foi interrompido (prior baixo) para
+liberar RAM para a [frente do oráculo destilado](../oraculo-destilado/README.md), que corrige os três
+defeitos deste desenho: um professor que conhecia τ, negativos presos em 0 e metade de rótulo duro.
