@@ -231,6 +231,11 @@ lightgbm:                              # plano §8.3
   n_estimators_cap: 1500
   early_stopping_rounds: 100
   max_bin: 255
+  extra_trees: true                    # E1, ADOTADO 2026-09-30 (knowledge/frentes/teto-offline/E1-extra-trees.md).
+                                        # Limiares de split sorteados: reduz a variância de um aprendiz
+                                        # limitado por amostra (C1: x2 séries = +0,0144). Partição 42, K=4:
+                                        # +0,0071 [+0,0038; +0,0102], 4/4 sementes; partição 43, K=2:
+                                        # +0,0115 [+0,0080; +0,0159], IC exclui 0 em todos os buckets.
   linear_tree: true                    # *** DEPENDE DE `model/fuse.py` (leia antes de mexer) ***
                                         # Folha linear = `leaf_const + Σ leaf_coeff_i · x_i`, e a
                                         # fusão de boosters do caminho de PRODUÇÃO precisa escalar

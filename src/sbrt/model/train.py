@@ -212,6 +212,8 @@ def train(rows: pd.DataFrame, weights: np.ndarray, cfg, progress: bool = True) -
         params["boosting"] = "dart"
     if not getattr(lgb_cfg, "enable_bundle", True):
         params["enable_bundle"] = False
+    if getattr(lgb_cfg, "extra_trees", False):
+        params["extra_trees"] = True
 
     boosters = []
     fold_evals = []
@@ -288,6 +290,27 @@ def train(rows: pd.DataFrame, weights: np.ndarray, cfg, progress: bool = True) -
         base_rate_curve=base_rate_curve,
     )
     return ensemble, oof_pred
+
+
+def refit_full(rows: pd.DataFrame, weights: np.ndarray, ensemble: ModelEnsemble, cfg) -> lgb.Booster:
+    """R1 (knowledge/frentes/teto-offline/R1-refit-completo.md): um booster treinado com 100% das linhas,
+    com os MESMOS parâmetros dos boosters de fold (lidos do próprio booster, incluindo feature_contri,
+    linear_tree e extra_trees) e round(média das best_iteration × `full_refit_mult`) rodadas.
+
+    Os boosters de fold veem 80% das séries cada, e o Onyx é limitado por amostra (C1: x2 séries =
+    +0,0144). No holdout externo, o refit valeu +0,004 sobre a média dos folds. Usado só em
+    `adapter/platform.py:train`; o OOF (caminho de medição) não passa por aqui."""
+    feature_cols = list(ensemble.feature_order)
+    X = rows[feature_cols].to_numpy(dtype=np.float32)
+    y = rows["y"].to_numpy(dtype=np.int32)
+    init = predict_base_rate_logit(rows["t"].to_numpy(dtype=np.float64), ensemble.base_rate_curve)
+    iters = [b.best_iteration if b.best_iteration > 0 else b.current_iteration() for b in ensemble.boosters]
+    n_full = max(1, int(round(float(np.mean(iters)) * cfg.lightgbm.full_refit_mult)))
+    params = dict(ensemble.boosters[0].params)
+    for k in ("early_stopping_round", "early_stopping_rounds", "metric", "num_iterations", "num_boost_round"):
+        params.pop(k, None)
+    params["metric"] = "None"
+    return lgb.train(params, lgb.Dataset(X, label=y, weight=weights, init_score=init), num_boost_round=n_full)
 
 
 def train_rank(rows: pd.DataFrame, cfg, progress: bool = True) -> tuple:

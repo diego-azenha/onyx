@@ -40,6 +40,7 @@ def train(
         from sbrt.model.weights import compute_row_weights
         from sbrt.model.detectability import compute_detectability_map
         from sbrt.model.fuse import fuse_boosters
+        from sbrt.model.train import refit_full
         from sbrt.model.train import train as train_ensemble
 
         records = [
@@ -77,7 +78,13 @@ def train(
         for s in seeds:
             cfg_s = replace(cfg, lightgbm=replace(cfg.lightgbm, boost_seed=int(s)))
             ensemble, _oof_pred = train_ensemble(rows, weights, cfg_s)
-            boosters.append(fuse_boosters(ensemble.boosters))
+            fundido = fuse_boosters(ensemble.boosters)
+            if cfg.lightgbm.full_refit:
+                # R1 (knowledge/frentes/teto-offline/R1-refit-completo.md): cada booster de fold viu 80%
+                # das séries; o refit vê 100%. Fusão 50/50 entre a média dos folds e o refit (a melhor
+                # variante no holdout externo).
+                fundido = fuse_boosters([fundido, refit_full(rows, weights, ensemble, cfg_s)])
+            boosters.append(fundido)
         ensemble = replace(ensemble, boosters=[fuse_boosters(boosters)])
         ensemble.save(model_directory_path)
         joblib.dump({"mode": "supervised"}, os.path.join(model_directory_path, _MODEL_FILE))

@@ -336,6 +336,13 @@ class LightGBMConfig:
     # colunas NaN-de-warmup o agrupamento exclusivo pode juntar features que nao sao mutuamente
     # exclusivas de fato -- `false` desliga e testa isso. Default `true` = comportamento LightGBM.
     dart: bool = False  # D3: `boosting=dart` (dropout entre árvores). Célula do sweep C4-mini.
+    extra_trees: bool = False  # E1 (knowledge/frentes/teto-offline/E1-extra-trees.md): limiares de split
+    # sorteados em vez de ótimos, regularização contra variância. O C1 mediu o Onyx limitado por amostra
+    # (x2 séries = +0,0144) e o extra-trees rendeu +0,005 no oráculo offline. Default False = no-op.
+    full_refit: bool = False  # R1 (knowledge/frentes/teto-offline/R1-refit-completo.md): em produção,
+    # além dos boosters de fold (80% das séries cada), treina um booster com 100% das linhas
+    # (`model/train.py:refit_full`) e o funde 50/50 com a média dos folds. Não afeta o OOF.
+    full_refit_mult: float = 1.0  # rodadas do refit = round(média das best_iteration dos folds × mult)
 
 
 @dataclass(frozen=True)
