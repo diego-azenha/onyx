@@ -43,3 +43,12 @@ Colunas novas e regularização são mecanismos diferentes, então podem somar s
 +0,000 a +0,004 contra o E1. Adotar se o IC excluir 0 e ≥ 3/4 sementes forem positivas.
 
 **Resultado V9 (14:18):** 0,6356 · contra o E1 **+0,0007 [−0,0015; +0,0027]** · contra o B0 +0,0078 [+0,0047; +0,0116] · sementes 777 −0,0032 · 101 +0,0009. **Nulo:** as famílias de evidência não somam sobre o extra-trees.
+
+## V10: E1 + |x| das features de log-variância/energia (hipótese antes de medir, 14:50)
+
+**Mecanismo:** as quedas de variância aparecem como valores **negativos** nas features de log-variância
+com sinal. No objetivo global, "variância baixa" costuma andar com negativos, então o GBM precisa de uma
+relação em **U** aprendida com poucos eventos de queda (Onyx 0,564 nas quedas; um sinal especialista,
+0,774). O |x| torna a relação monotônica e mais barata em amostra. Só a família de variância (~25
+colunas), para não diluir o `feature_fraction`. Previsão: **+0,000 a +0,004** contra o E1, com o ganho
+concentrado nas quedas. Adotar com IC excluindo 0 e ≥3/4 sementes positivas.
