@@ -33,4 +33,5 @@ Incumbente: **E1 = 0,6349** OOF (partição 42, K=4).
 | G1: calibração cruzada por grupo (perfil ACF × curtose) × faixa de t | **−0,0098**: a escala do Onyx entre tipos de série já é melhor que uma logística por célula |
 | G2: auto-referência (score − α·linha de base da própria série) | mínimo corrente −0,025; média dos 10/25 primeiros −0,006/−0,005; média corrente 0: descartado |
 | Sobreposição invariante a afim entre o teste reduzido e o treino | **zero** em 344k janelas: canal fechado |
-| Leaderboard (API) | 21 posições entre 65,5% e 68,7%, todas determinísticas: **o pelotão está em 0,66–0,675** |
+| Leaderboard (API, crunch 22, release 234) | **151 posições.** rank 1: 68,7% · 10: 66,9% · 25: ~66,0% · 50: 65,0% · 100: 63,9% · 150: 63,2%. Scores ≥ 0,66: 25; ≥ 0,65: 50; ≥ 0,64: 100. **O E1 (~0,634 estimado) ficaria por volta do rank 125.** Top 50 exige +0,015; top 25, +0,025 |
+| n_on previsível pelo conteúdo do histórico? (GBM com CV) | **não**: Spearman 0,015, R² < 0. O prior t/n_on (que vale 0,65 sozinho) é inacessível |

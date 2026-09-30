@@ -35,3 +35,11 @@ extra-trees, foi descartada e refeita.
 | V7 lr 0,025, cap 3000 | 0,6348 | −0,0002 [−0,0019; +0,0016] | +0,0070 [+0,0041; +0,0101] | 777 −0,0001 · 101 **+0,0035** · 202 **+0,0023** | nulo **no bag**: ganha por semente e some na média de 4. Mesmo padrão do E1 (os efeitos de redução de variância se sobrepõem). Custa 2× o tempo de treino e de inferência |
 | V8 `min_data_in_leaf` 800 | 0,6343 | −0,0006 [−0,0025; +0,0013] | +0,0065 [+0,0035; +0,0097] | 777 −0,0007 · 101 +0,0006 | nulo |
 | V4 top-65 (poda) | 0,6330 | −0,0019 [−0,0041; +0,0003] | +0,0053 [+0,0023; +0,0082] | — | nulo, levemente pior (a 1ª largada falhou por falta de `thin_weight` e foi refeita) |
+
+## V9: E1 + S5a (famílias de evidência `escala_desce`/`escala_sobe` como features)
+
+**Hipótese (antes de medir, 13:15):** o S5a deu +0,0044 [+0,0016; +0,0072] sobre o B0 (sem extra-trees).
+Colunas novas e regularização são mecanismos diferentes, então podem somar sobre o E1. Previsão:
++0,000 a +0,004 contra o E1. Adotar se o IC excluir 0 e ≥ 3/4 sementes forem positivas.
+
+**Resultado V9 (14:18):** 0,6356 · contra o E1 **+0,0007 [−0,0015; +0,0027]** · contra o B0 +0,0078 [+0,0047; +0,0116] · sementes 777 −0,0032 · 101 +0,0009. **Nulo:** as famílias de evidência não somam sobre o extra-trees.
